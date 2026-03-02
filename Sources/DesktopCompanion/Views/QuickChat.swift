@@ -15,28 +15,33 @@ struct QuickChat: View {
 
             if !state.chatResponse.isEmpty {
                 ScrollView {
-                    if let attributed = try? AttributedString(markdown: state.chatResponse,
-                            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                        Text(attributed)
-                            .font(.system(.callout, design: .rounded))
-                            .foregroundStyle(.primary)
-                            .lineSpacing(3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    } else {
-                        Text(state.chatResponse)
-                            .font(.system(.callout, design: .rounded))
-                            .foregroundStyle(.primary)
-                            .lineSpacing(3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(state.chatResponse.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
+                            if !paragraph.trimmingCharacters(in: .whitespaces).isEmpty {
+                                if let attributed = try? AttributedString(markdown: paragraph) {
+                                    Text(attributed)
+                                        .font(.system(.body, design: .rounded))
+                                        .foregroundStyle(.primary)
+                                        .lineSpacing(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                } else {
+                                    Text(paragraph)
+                                        .font(.system(.body, design: .rounded))
+                                        .foregroundStyle(.primary)
+                                        .lineSpacing(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
                     }
                 }
-                .frame(maxHeight: 120)
+                .frame(maxHeight: 160)
                 .padding(10)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.primary.opacity(0.04))
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.primary.opacity(0.05))
                 )
             }
 
