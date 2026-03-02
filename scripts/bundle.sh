@@ -18,4 +18,8 @@ cp .build/release/DesktopCompanion "$BUNDLE_DIR/Contents/MacOS/"
 # Copy Info.plist
 cp Info.plist "$BUNDLE_DIR/Contents/"
 
+# Ad-hoc code sign so macOS treats it as a real app (Spotlight, Launchpad, Gatekeeper)
+echo "Code signing (ad-hoc)..."
+codesign --force --sign - "$BUNDLE_DIR"
+
 echo "✅ App bundle created at $BUNDLE_DIR"

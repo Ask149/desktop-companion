@@ -10,8 +10,8 @@ struct SystemHealth: View {
     @State private var expanded = false
 
     var body: some View {
-        DisclosureGroup("System Health", isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
                 healthRow("Aidaemon", ok: aidaemonHealthy, detail: model.isEmpty ? nil : model)
                 healthRow("Heartbeat", ok: report?.lastUpdated != nil,
                          detail: report?.lastUpdated.map { "Last: \(timeAgo($0))" })
@@ -23,22 +23,29 @@ struct SystemHealth: View {
                 }
             }
             .font(.caption)
-            .padding(.top, 6)
+            .padding(.top, 8)
+        } label: {
+            Label("System Health", systemImage: "heart.text.square")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func healthRow(_ name: String, ok: Bool, detail: String?) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundColor(ok ? .green : .red)
-                .font(.caption2)
+                .foregroundStyle(ok ? .green : .red)
+                .imageScale(.small)
             Text(name)
+                .foregroundStyle(.primary)
             Spacer()
             if let detail = detail {
                 Text(detail)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.tertiary)
+                    .font(.caption2)
             }
         }
     }

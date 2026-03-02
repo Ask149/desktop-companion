@@ -6,31 +6,37 @@ struct PopoverView: View {
     @ObservedObject var state: CompanionState
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
             // Header
             HStack {
                 Text("Desktop Companion")
-                    .font(.headline)
+                    .font(.system(.headline, design: .rounded))
                 Spacer()
                 Button(action: { Task { await state.refresh() } }) {
                     Image(systemName: "arrow.clockwise")
+                        .imageScale(.small)
                 }
                 .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
                 .help("Refresh")
 
                 Button(action: { NSApplication.shared.terminate(nil) }) {
                     Image(systemName: "power")
+                        .imageScale(.small)
                 }
                 .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
                 .help("Quit")
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
             Divider()
+                .padding(.horizontal, 12)
 
             ScrollView {
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     StatusCard(
                         mode: state.mode,
                         aidaemonHealthy: state.aidaemonHealthy,
@@ -48,9 +54,10 @@ struct PopoverView: View {
                     )
                 }
                 .padding(.horizontal, 12)
-                .padding(.bottom, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 14)
             }
         }
-        .frame(width: 340, height: 500)
+        .frame(width: 360, height: 520)
     }
 }

@@ -34,7 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Create popover with SwiftUI views
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 320, height: 450)
+        popover.contentSize = NSSize(width: 360, height: 520)
         popover.behavior = .transient // Close when clicking outside
         popover.contentViewController = NSHostingController(rootView: PopoverView(state: state))
     }

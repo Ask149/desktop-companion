@@ -9,19 +9,21 @@ struct StatusCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            // Pulsing status indicator
             Circle()
                 .fill(statusColor)
                 .frame(width: 12, height: 12)
+                .shadow(color: statusColor.opacity(0.5), radius: 4)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(statusText)
-                    .font(.headline)
-                    .foregroundColor(.primary)
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundStyle(.primary)
 
                 if let date = lastUpdated {
                     Text("Updated \(date, style: .relative) ago")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
 
@@ -29,12 +31,13 @@ struct StatusCard: View {
 
             if !aidaemonHealthy {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.red)
+                    .foregroundStyle(.red)
+                    .imageScale(.small)
                     .help("Aidaemon is not responding")
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var statusColor: Color {
@@ -49,9 +52,9 @@ struct StatusCard: View {
 
     private var statusText: String {
         switch mode {
-        case .idle: return "All good"
-        case .thinking: return "Thinking..."
-        case .alert: return "Needs attention"
+        case .idle: return "All Good"
+        case .thinking: return "Thinking…"
+        case .alert: return "Needs Attention"
         case .sleeping: return "Sleeping"
         case .dead: return "Offline"
         }
