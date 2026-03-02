@@ -60,7 +60,11 @@ public class CompanionState: ObservableObject {
     }
 
     public func sendChat(message: String) async {
-        guard let client = client, !message.isEmpty else { return }
+        guard !message.isEmpty else { return }
+        guard let client = client else {
+            chatResponse = "⚠️ aidaemon is offline — start it with `aidaemon start`"
+            return
+        }
         isChatting = true
         chatResponse = ""
         deriveMode() // Switch to .thinking
