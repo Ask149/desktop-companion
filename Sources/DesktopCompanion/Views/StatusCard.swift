@@ -8,12 +8,12 @@ struct StatusCard: View {
     let lastUpdated: Date?
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Circle()
                 .fill(statusColor)
-                .frame(width: 10, height: 10)
+                .frame(width: 12, height: 12)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(statusText)
                     .font(.headline)
                     .foregroundColor(.primary)
@@ -33,7 +33,7 @@ struct StatusCard: View {
                     .help("Aidaemon is not responding")
             }
         }
-        .padding()
+        .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
     }
 

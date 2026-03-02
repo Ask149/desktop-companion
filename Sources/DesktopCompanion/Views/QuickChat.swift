@@ -7,7 +7,7 @@ struct QuickChat: View {
     @State private var input: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Quick Chat")
                 .font(.subheadline)
                 .fontWeight(.semibold)
@@ -15,12 +15,30 @@ struct QuickChat: View {
 
             if !state.chatResponse.isEmpty {
                 ScrollView {
-                    Text(state.chatResponse)
-                        .font(.caption)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    if let attributed = try? AttributedString(markdown: state.chatResponse) {
+                        Text(attributed)
+                            .font(.caption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(nsColor: .textBackgroundColor))
+                            )
+                    } else {
+                        // Fallback if markdown parsing fails
+                        Text(state.chatResponse)
+                            .font(.caption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(nsColor: .textBackgroundColor))
+                            )
+                    }
                 }
-                .frame(maxHeight: 80)
+                .frame(maxHeight: 100)
             }
 
             HStack {
@@ -41,7 +59,7 @@ struct QuickChat: View {
                 .buttonStyle(.borderless)
             }
         }
-        .padding()
+        .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
     }
 

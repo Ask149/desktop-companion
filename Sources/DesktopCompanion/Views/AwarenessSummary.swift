@@ -6,7 +6,7 @@ struct AwarenessSummary: View {
     let report: AwarenessReport?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Awareness")
                 .font(.subheadline)
                 .fontWeight(.semibold)
@@ -14,10 +14,18 @@ struct AwarenessSummary: View {
 
             if let report = report, !report.summary.isEmpty {
                 ScrollView {
-                    Text(report.summary)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    if let attributed = try? AttributedString(markdown: report.summary) {
+                        Text(attributed)
+                            .font(.caption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    } else {
+                        // Fallback if markdown parsing fails
+                        Text(report.summary)
+                            .font(.caption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
                 }
                 .frame(maxHeight: 150)
             } else {
@@ -27,7 +35,7 @@ struct AwarenessSummary: View {
                     .italic()
             }
         }
-        .padding()
+        .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
     }
 }

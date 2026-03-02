@@ -11,7 +11,7 @@ struct SystemHealth: View {
 
     var body: some View {
         DisclosureGroup("System Health", isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 healthRow("Aidaemon", ok: aidaemonHealthy, detail: model.isEmpty ? nil : model)
                 healthRow("Heartbeat", ok: report?.lastUpdated != nil,
                          detail: report?.lastUpdated.map { "Last: \(timeAgo($0))" })
@@ -23,8 +23,9 @@ struct SystemHealth: View {
                 }
             }
             .font(.caption)
+            .padding(.top, 6)
         }
-        .padding()
+        .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
     }
 

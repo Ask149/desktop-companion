@@ -6,7 +6,7 @@ struct PopoverView: View {
     @ObservedObject var state: CompanionState
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             // Header
             HStack {
                 Text("Desktop Companion")
@@ -24,13 +24,13 @@ struct PopoverView: View {
                 .buttonStyle(.borderless)
                 .help("Quit")
             }
-            .padding(.horizontal)
-            .padding(.top, 8)
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
 
             Divider()
 
             ScrollView {
-                VStack(spacing: 8) {
+                VStack(spacing: 12) {
                     StatusCard(
                         mode: state.mode,
                         aidaemonHealthy: state.aidaemonHealthy,
@@ -47,9 +47,10 @@ struct PopoverView: View {
                         report: state.awarenessReport
                     )
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
         }
-        .frame(width: 320, height: 450)
+        .frame(width: 340, height: 500)
     }
 }
