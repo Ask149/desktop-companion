@@ -9,7 +9,7 @@ struct PopoverView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Desktop Companion")
+                Text("Friday")
                     .font(.system(.headline, design: .rounded))
                 Spacer()
                 Button(action: { Task { await state.refresh() } }) {

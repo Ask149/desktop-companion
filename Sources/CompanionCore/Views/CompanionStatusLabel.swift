@@ -20,6 +20,10 @@ public class CompanionStatusLabel {
         didSet { updateIcon() }
     }
 
+    public var mood: Mood = .calm {
+        didSet { updateIcon() }
+    }
+
     public init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
         updateIcon()
@@ -88,7 +92,7 @@ public class CompanionStatusLabel {
     }
 
     private func updateIcon() {
-        let icon = CritterRenderer.makeIcon(mode: mode, blink: blinkAmount, wiggle: wiggleAmount)
+        let icon = CritterRenderer.makeIcon(mode: mode, mood: mood, blink: blinkAmount, wiggle: wiggleAmount)
         statusItem.button?.image = icon
     }
 

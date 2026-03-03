@@ -53,7 +53,7 @@ public final class AidaemonClient: Sendable {
     // MARK: - Chat
 
     /// Send a chat message and get a response.
-    public func chat(message: String, sessionID: String = "companion") async throws -> ChatResponse {
+    public func chat(message: String, sessionID: String = "companion", model: String? = nil) async throws -> ChatResponse {
         let url = baseURL.appendingPathComponent("chat")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -61,7 +61,10 @@ public final class AidaemonClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120 // LLM can take a while
 
-        let body: [String: String] = ["message": message, "session_id": sessionID]
+        var body: [String: String] = ["message": message, "session_id": sessionID]
+        if let model = model {
+            body["model"] = model
+        }
         request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await session.data(for: request)

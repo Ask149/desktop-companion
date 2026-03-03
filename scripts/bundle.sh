@@ -1,25 +1,22 @@
 #!/bin/bash
 set -e
 
-# Build release binary
-echo "Building release binary..."
+APP_NAME="Friday"
+BUILD_DIR=".build/release"
+APP_DIR="build/${APP_NAME}.app"
+
+echo "Building release..."
 swift build -c release
 
-# Create app bundle structure
 echo "Creating app bundle..."
-BUNDLE_DIR="build/DesktopCompanion.app"
-rm -rf "$BUNDLE_DIR"
-mkdir -p "$BUNDLE_DIR/Contents/MacOS"
-mkdir -p "$BUNDLE_DIR/Contents/Resources"
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Resources"
 
-# Copy binary
-cp .build/release/DesktopCompanion "$BUNDLE_DIR/Contents/MacOS/"
+cp "${BUILD_DIR}/DesktopCompanion" "$APP_DIR/Contents/MacOS/DesktopCompanion"
+cp Info.plist "$APP_DIR/Contents/"
 
-# Copy Info.plist
-cp Info.plist "$BUNDLE_DIR/Contents/"
+echo "Signing..."
+codesign --force --deep --sign - "$APP_DIR"
 
-# Ad-hoc code sign so macOS treats it as a real app (Spotlight, Launchpad, Gatekeeper)
-echo "Code signing (ad-hoc)..."
-codesign --force --sign - "$BUNDLE_DIR"
-
-echo "✅ App bundle created at $BUNDLE_DIR"
+echo "Done: $APP_DIR"

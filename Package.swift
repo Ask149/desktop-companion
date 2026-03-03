@@ -5,13 +5,18 @@ let package = Package(
     name: "DesktopCompanion",
     platforms: [.macOS(.v14)],
     targets: [
-        // Library target containing all logic (testable)
         .target(
             name: "CompanionCore",
             path: "Sources/CompanionCore",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .unsafeFlags(["-enable-testing"], .when(configuration: .release))
+            ],
+            linkerSettings: [
+                .linkedFramework("Speech"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("IOKit"),
+                .linkedFramework("Carbon"),
             ]
         ),
         // Executable target — thin wrapper, just launches the app

@@ -166,4 +166,31 @@ public struct CritterRenderer: Sendable {
         image.isTemplate = false
         return image
     }
+
+    /// Create a menu bar icon tinted by the current mood color.
+    @MainActor
+    public static func makeIcon(mode: CompanionMode, mood: Mood, blink: CGFloat, wiggle: CGFloat) -> NSImage {
+        let baseIcon = makeIcon(mode: mode, blink: blink, wiggle: wiggle)
+        let moodColor = mood.expression.color
+
+        // Create a tinted version
+        let size = baseIcon.size
+        let tinted = NSImage(size: size, flipped: false) { rect in
+            baseIcon.draw(in: rect)
+
+            // Overlay mood color at low opacity
+            let color = NSColor(
+                calibratedRed: moodColor.red,
+                green: moodColor.green,
+                blue: moodColor.blue,
+                alpha: 0.25
+            )
+            color.setFill()
+            rect.fill(using: .sourceAtop)
+
+            return true
+        }
+        tinted.isTemplate = false
+        return tinted
+    }
 }

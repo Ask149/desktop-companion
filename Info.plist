@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>DesktopCompanion</string>
+    <string>Friday</string>
     <key>CFBundleDisplayName</key>
-    <string>Desktop Companion</string>
+    <string>Friday</string>
     <key>CFBundleIdentifier</key>
-    <string>com.ask149.desktop-companion</string>
+    <string>com.ask149.friday</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>2.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>2.0</string>
     <key>CFBundleExecutable</key>
     <string>DesktopCompanion</string>
     <key>CFBundlePackageType</key>
@@ -22,5 +22,9 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Friday uses your microphone for voice commands when the overlay is active.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Friday uses speech recognition to understand your voice commands.</string>
 </dict>
 </plist>

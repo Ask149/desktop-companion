@@ -231,6 +231,192 @@ do {
 }
 
 // ============================================================
+// MARK: - Mood Tests
+// ============================================================
+
+print("Running Mood tests...\n")
+
+// Test: all moods have valid expressions
+do {
+    print("  test: allMoodsHaveExpressions")
+    for mood in Mood.allCases {
+        let expr = mood.expression
+        check(expr.glowIntensity >= 0 && expr.glowIntensity <= 1.0,
+              "mood \(mood) glow should be 0-1, got \(expr.glowIntensity)")
+        check(expr.color.red >= 0 && expr.color.red <= 1.0,
+              "mood \(mood) color.red should be 0-1")
+    }
+    print("    ✓")
+}
+
+// Test: moods from string
+do {
+    print("  test: moodFromRawValue")
+    check(Mood(rawValue: "calm") == .calm, "should parse 'calm'")
+    check(Mood(rawValue: "alert") == .alert, "should parse 'alert'")
+    check(Mood(rawValue: "invalid") == nil, "should return nil for invalid")
+    print("    ✓")
+}
+
+// Test: mood count
+do {
+    print("  test: moodCount")
+    check(Mood.allCases.count == 8, "should have 8 moods, got \(Mood.allCases.count)")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - SessionStore Tests
+// ============================================================
+
+print("Running SessionStore tests...\n")
+
+// Test: initial state
+do {
+    print("  test: initialState")
+    let store = SessionStore()
+    check(store.messages.isEmpty, "should start empty")
+    check(!store.hasHistory, "should have no history")
+    check(store.lastResponse == nil, "should have no last response")
+    check(store.sessionID.hasPrefix("friday-"), "sessionID should start with 'friday-'")
+    print("    ✓")
+}
+
+// Test: add messages
+do {
+    print("  test: addMessages")
+    let store = SessionStore()
+    store.add(role: "user", content: "hello")
+    store.add(role: "assistant", content: "hi there")
+    check(store.messages.count == 2, "should have 2 messages")
+    check(store.hasHistory, "should have history")
+    check(store.lastResponse == "hi there", "last response should be 'hi there'")
+    print("    ✓")
+}
+
+// Test: clear
+do {
+    print("  test: clearSession")
+    let store = SessionStore()
+    store.add(role: "user", content: "test")
+    store.clear()
+    check(store.messages.isEmpty, "should be empty after clear")
+    check(!store.hasHistory, "should have no history after clear")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - IdleDetector Tests
+// ============================================================
+
+print("\nRunning IdleDetector tests...\n")
+
+// Test: idle time returns a non-negative value
+do {
+    print("  test: idleTimeNonNegative")
+    let detector = IdleDetector()
+    let idle = detector.systemIdleTime()
+    check(idle >= 0, "idle time should be >= 0, got \(idle)")
+    print("    ✓")
+}
+
+// Test: threshold default
+do {
+    print("  test: idleThresholdDefault")
+    let detector = IdleDetector()
+    check(detector.threshold == 300, "default threshold should be 300s (5min)")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - MoodEngine Tests
+// ============================================================
+
+print("Running MoodEngine tests...\n")
+
+// Test: system mood when aidaemon is down + stale heartbeat
+do {
+    print("  test: systemMoodAidaemonDown")
+    let engine = MoodEngine(client: nil, heartbeat: HeartbeatMonitor())
+    let mood = engine.deriveSystemMood(aidaemonHealthy: false)
+    // Without aidaemon and no heartbeat file, should be alert or concerned
+    check(mood == .alert || mood == .concerned,
+          "should be alert or concerned when aidaemon is down, got \(mood)")
+    print("    ✓")
+}
+
+// Test: system mood when healthy
+do {
+    print("  test: systemMoodHealthy")
+    let engine = MoodEngine(client: nil, heartbeat: HeartbeatMonitor())
+    let mood = engine.deriveSystemMood(aidaemonHealthy: true)
+    let hour = Calendar.current.component(.hour, from: Date())
+    if hour >= 22 || hour < 8 {
+        check(mood == .sleepy, "should be sleepy outside active hours")
+    } else {
+        check(mood == .calm || mood == .concerned,
+              "should be calm or concerned during active hours, got \(mood)")
+    }
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - VoiceOutput Tests
+// ============================================================
+
+print("Running VoiceOutput tests...\n")
+
+// Test: truncation (test via speak behavior with mute)
+do {
+    print("  test: voiceOutputMuted")
+    let voice = VoiceOutput()
+    voice.isMuted = true
+    var finished = false
+    voice.onFinished = { finished = true }
+    voice.speak("Hello world. This is a test.")
+    check(!voice.isSpeaking, "should not be speaking when muted")
+    check(finished, "should call onFinished even when muted")
+    print("    ✓")
+}
+
+// Test: initial state
+do {
+    print("  test: voiceOutputInitialState")
+    let voice = VoiceOutput()
+    check(!voice.isSpeaking, "should not be speaking initially")
+    check(!voice.isMuted, "should not be muted initially")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - FaceRenderer Tests
+// ============================================================
+
+print("Running FaceRenderer tests...\n")
+
+// Test: render params defaults
+do {
+    print("  test: renderParamsDefaults")
+    let params = FaceRenderer.RenderParams(mood: .calm)
+    check(params.blinkAmount == 0, "default blink should be 0")
+    check(params.mouthOpenness == 0, "default mouth should be 0")
+    check(params.size.width == 300, "default size should be 300x300")
+    print("    ✓")
+}
+
+// Test: all moods produce valid render params
+do {
+    print("  test: allMoodsRenderParams")
+    for mood in Mood.allCases {
+        let params = FaceRenderer.RenderParams(mood: mood, animationPhase: 1.5)
+        check(params.mood == mood, "mood should match")
+        // We can't easily test Canvas drawing without a window, but params construction works
+    }
+    check(true, "all moods create valid render params")
+    print("    ✓")
+}
+
+// ============================================================
 // MARK: - Results
 // ============================================================
 
