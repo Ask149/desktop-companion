@@ -7,6 +7,8 @@ import CompanionCore
 struct TranscriptView: View {
     let messages: [SessionStore.Message]
     let partialTranscription: String
+    let partialAssistantResponse: String
+    let streamStatus: String
 
     var body: some View {
         VStack(spacing: 8) {
@@ -35,6 +37,28 @@ struct TranscriptView: View {
                         Spacer()
                     }
                 }
+            }
+
+            // Show streaming assistant response (growing bubble)
+            if !partialAssistantResponse.isEmpty {
+                HStack {
+                    Text(partialAssistantResponse)
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: 500, alignment: .leading)
+                        .animation(.easeOut(duration: 0.1), value: partialAssistantResponse)
+                    Spacer()
+                }
+            }
+
+            // Show stream status (tool use, thinking, etc.)
+            if !streamStatus.isEmpty {
+                Text(streamStatus)
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .transition(.opacity)
             }
 
             // Show live transcription (partial)

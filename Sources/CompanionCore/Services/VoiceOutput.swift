@@ -8,7 +8,7 @@ import AVFoundation
 public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
     /// Called when mouth should be open/closed during speech (0.0 = closed, 1.0 = fully open).
     public var onMouthUpdate: ((Double) -> Void)?
-    /// Called when speech finishes.
+    /// Called when speech finishes (all queued utterances done).
     public var onFinished: (() -> Void)?
 
     public private(set) var isSpeaking = false
@@ -16,51 +16,51 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
 
     private let synthesizer = AVSpeechSynthesizer()
     private var mouthTimer: Timer?
+    private var mouthPhase: Double = 0
 
     /// Maximum sentences to speak (truncate long responses).
     public let maxSpokenSentences = 3
+
+    /// Number of utterances currently queued or speaking.
+    private var pendingUtterances = 0
 
     public override init() {
         super.init()
         synthesizer.delegate = self
     }
 
-    /// Speak text aloud (unless muted). Truncates to first 3 sentences for TTS.
+    /// Speak text aloud (unless muted). Stops any current speech first.
+    /// Truncates to first 3 sentences for TTS.
+    /// Use for standalone responses (greeting, non-streaming chat).
     public func speak(_ text: String) {
         guard !isMuted else {
-            // Still call onFinished so the UI knows to stop waiting
             onFinished?()
             return
         }
 
-        // Stop any current speech
+        // Stop any current speech and clear queue
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
+        pendingUtterances = 0
 
-        // Truncate to first N sentences for speech
         let spokenText = truncateToSentences(text, max: maxSpokenSentences)
-
-        let utterance = AVSpeechUtterance(string: spokenText)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        utterance.pitchMultiplier = 1.0
-        utterance.volume = 1.0
-
-        // Try to use a good voice
-        if let voice = AVSpeechSynthesisVoice(identifier: "com.apple.voice.premium.en-US.Zoe") {
-            utterance.voice = voice
-        } else if let voice = AVSpeechSynthesisVoice(language: "en-US") {
-            utterance.voice = voice
-        }
-
-        isSpeaking = true
-        startMouthAnimation()
-        synthesizer.speak(utterance)
+        enqueueUtterance(spokenText)
     }
 
-    /// Stop speaking immediately.
+    /// Enqueue text for speaking without interrupting current speech.
+    /// AVSpeechSynthesizer natively queues utterances — this method
+    /// leverages that for sentence-level streaming TTS.
+    public func enqueue(_ text: String) {
+        guard !isMuted else { return }
+        guard !text.isEmpty else { return }
+        enqueueUtterance(text)
+    }
+
+    /// Stop speaking immediately and clear the queue.
     public func stop() {
         synthesizer.stopSpeaking(at: .immediate)
+        pendingUtterances = 0
         stopMouthAnimation()
         isSpeaking = false
     }
@@ -69,16 +69,25 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
 
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                               didFinish utterance: AVSpeechUtterance) {
+        let stillSpeaking = synthesizer.isSpeaking
         Task { @MainActor in
-            self.stopMouthAnimation()
-            self.isSpeaking = false
-            self.onFinished?()
+            self.pendingUtterances = max(0, self.pendingUtterances - 1)
+            // Only stop animation and fire onFinished when all queued utterances are done
+            if self.pendingUtterances == 0 && !stillSpeaking {
+                self.stopMouthAnimation()
+                self.isSpeaking = false
+                self.onFinished?()
+            }
         }
     }
 
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                               didCancel utterance: AVSpeechUtterance) {
+        let stillSpeaking = synthesizer.isSpeaking
         Task { @MainActor in
+            self.pendingUtterances = max(0, self.pendingUtterances - 1)
+            // Only clean up if nothing new started (prevents race with speak()/enqueue())
+            guard !stillSpeaking && self.pendingUtterances == 0 else { return }
             self.stopMouthAnimation()
             self.isSpeaking = false
         }
@@ -88,12 +97,13 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
 
     /// Simple sinusoidal mouth oscillation at ~10Hz during speech.
     private func startMouthAnimation() {
-        var phase: Double = 0
+        mouthPhase = 0
         mouthTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                phase += 0.6
-                let openness = (sin(phase) + 1) / 2 // 0.0 to 1.0
-                self?.onMouthUpdate?(openness)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.mouthPhase += 0.6
+                let openness = (sin(self.mouthPhase) + 1) / 2 // 0.0 to 1.0
+                self.onMouthUpdate?(openness)
             }
         }
     }
@@ -105,6 +115,28 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     // MARK: - Private
+
+    /// Create an utterance with consistent voice settings and enqueue it.
+    private func enqueueUtterance(_ text: String) {
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.pitchMultiplier = 1.0
+        utterance.volume = 1.0
+
+        // Try to use a good voice
+        if let voice = AVSpeechSynthesisVoice(identifier: "com.apple.voice.premium.en-US.Zoe") {
+            utterance.voice = voice
+        } else if let voice = AVSpeechSynthesisVoice(language: "en-US") {
+            utterance.voice = voice
+        }
+
+        pendingUtterances += 1
+        if !isSpeaking {
+            isSpeaking = true
+            startMouthAnimation()
+        }
+        synthesizer.speak(utterance)
+    }
 
     private func truncateToSentences(_ text: String, max: Int) -> String {
         let sentenceEnders: [Character] = [".", "!", "?"]
@@ -120,7 +152,6 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
         }
 
         if count == 0 {
-            // No sentence enders found — return first 200 chars
             return String(text.prefix(200))
         }
 

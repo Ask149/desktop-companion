@@ -3,14 +3,14 @@ import SwiftUI
 import CompanionCore
 
 /// Animated geometric face view using TimelineView + Canvas.
-/// Renders at 60fps with smooth mood transitions.
+/// Renders at 30fps with smooth mood transitions.
 struct FaceView: View {
     let mood: Mood
     let mouthOpenness: Double
     let blinkAmount: Double
 
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
             Canvas { context, size in
                 // Derive phase from timeline date for continuous animation
                 let seconds = timeline.date.timeIntervalSinceReferenceDate

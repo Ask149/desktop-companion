@@ -5,10 +5,12 @@ import Foundation
 public struct AidaemonConfig: Codable, Sendable {
     public let port: Int
     public let apiToken: String
+    public let chatModel: String?
 
     enum CodingKeys: String, CodingKey {
         case port
         case apiToken = "api_token"
+        case chatModel = "chat_model"
     }
 
     /// Load from ~/.config/aidaemon/config.json

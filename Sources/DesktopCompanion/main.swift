@@ -173,16 +173,30 @@ struct OverlayContentView: View {
                     .font(.system(.caption, design: .rounded))
                     .foregroundStyle(.white.opacity(0.3))
 
+                // Thinking indicator (only show when chatting but no streaming content yet)
+                if state.isChatting && state.partialAssistantResponse.isEmpty {
+                    HStack(spacing: 4) {
+                        Text("thinking")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.4))
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .tint(.white.opacity(0.4))
+                    }
+                }
+
                 Spacer()
 
                 // Transcript
                 TranscriptView(
-                    messages: state.session.messages,
-                    partialTranscription: state.partialTranscription
+                    messages: state.sessionMessages,
+                    partialTranscription: state.partialTranscription,
+                    partialAssistantResponse: state.partialAssistantResponse,
+                    streamStatus: state.streamStatus
                 )
 
                 // Listening indicator
-                if state.voiceInput.isListening {
+                if state.isVoiceListening {
                     HStack(spacing: 6) {
                         Circle()
                             .fill(.red)

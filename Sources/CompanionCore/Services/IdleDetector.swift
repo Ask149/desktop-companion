@@ -28,7 +28,7 @@ public final class IdleDetector {
     /// Start polling for idle state.
     public func start() {
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Task { @MainActor in
                 self?.check()
             }
         }

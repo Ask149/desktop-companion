@@ -417,6 +417,166 @@ do {
 }
 
 // ============================================================
+// MARK: - ConfigLoader chatModel Tests
+// ============================================================
+
+print("Running ConfigLoader chatModel tests...\n")
+
+// Test: config with chat_model decodes correctly
+do {
+    print("  test: configWithChatModel")
+    let json = """
+    {"port": 8420, "api_token": "test-token", "chat_model": "claude-opus-4"}
+    """.data(using: .utf8)!
+    let config = AidaemonConfig.decode(from: json)
+    check(config != nil, "config should decode")
+    check(config?.port == 8420, "port should be 8420")
+    check(config?.apiToken == "test-token", "token should match")
+    check(config?.chatModel == "claude-opus-4", "chat_model should decode")
+    print("    ✓")
+}
+
+// Test: config without chat_model still decodes (backward compat)
+do {
+    print("  test: configWithoutChatModel")
+    let json = """
+    {"port": 9000, "api_token": "abc"}
+    """.data(using: .utf8)!
+    let config = AidaemonConfig.decode(from: json)
+    check(config != nil, "config should decode without chat_model")
+    check(config?.chatModel == nil, "chat_model should be nil when absent")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - Session Restore Tests
+// ============================================================
+
+print("Running Session Restore tests...\n")
+
+// Test: SessionStore restore populates messages
+do {
+    print("  test: sessionRestorePopulatesMessages")
+    let store = SessionStore()
+    check(store.messages.isEmpty, "should start empty")
+    check(!store.hasHistory, "should have no history")
+    
+    let mockMessages: [(role: String, content: String)] = [
+        ("user", "Hello Friday"),
+        ("assistant", "Hey! How's it going?"),
+        ("user", "What's the weather?"),
+        ("assistant", "I don't have weather data, but it looks sunny outside."),
+    ]
+    store.restore(from: mockMessages.map { SessionStore.Message(role: $0.role, content: $0.content) })
+    
+    check(store.messages.count == 4, "should have 4 messages after restore, got \(store.messages.count)")
+    check(store.hasHistory, "should have history after restore")
+    check(store.messages[0].role == "user", "first message should be user")
+    check(store.messages[0].content == "Hello Friday", "first message content should match")
+    check(store.messages[3].role == "assistant", "last message should be assistant")
+    print("    ✓")
+}
+
+// Test: SessionStore restore triggers onMessagesChanged
+do {
+    print("  test: sessionRestoreTriggersCallback")
+    let store = SessionStore()
+    var callbackFired = false
+    var callbackCount = 0
+    store.onMessagesChanged = { messages in
+        callbackFired = true
+        callbackCount = messages.count
+    }
+    
+    store.restore(from: [
+        SessionStore.Message(role: "user", content: "test"),
+        SessionStore.Message(role: "assistant", content: "response"),
+    ])
+    
+    check(callbackFired, "onMessagesChanged should fire on restore")
+    check(callbackCount == 2, "callback should receive 2 messages, got \(callbackCount)")
+    print("    ✓")
+}
+
+// Test: SessionStore restore then add works correctly
+do {
+    print("  test: sessionRestoreThenAdd")
+    let store = SessionStore()
+    store.restore(from: [
+        SessionStore.Message(role: "user", content: "old message"),
+    ])
+    store.add(role: "user", content: "new message")
+    
+    check(store.messages.count == 2, "should have 2 messages (1 restored + 1 new)")
+    check(store.messages[0].content == "old message", "first should be restored message")
+    check(store.messages[1].content == "new message", "second should be new message")
+    print("    ✓")
+}
+
+// Test: Empty restore is a no-op
+do {
+    print("  test: sessionRestoreEmpty")
+    let store = SessionStore()
+    store.add(role: "user", content: "existing")
+    store.restore(from: [])
+    
+    check(store.messages.count == 1, "empty restore should not clear existing messages")
+    check(store.messages[0].content == "existing", "existing message should remain")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - SSE Streaming Tests
+// ============================================================
+
+print("\nRunning SSE streaming tests...\n")
+
+// Test: chatStream returns AsyncThrowingStream (live test if aidaemon running)
+do {
+    print("  test: chatStreamLive")
+    let config = AidaemonConfig.load()
+    if let config = config, let client = AidaemonClient(config: config) {
+        let health = await client.checkHealth()
+        if health != nil {
+            var events: [String] = []
+            var gotDone = false
+            let stream = client.chatStream(
+                message: "Say just the word 'hello'",
+                sessionID: "test-sse-\(Int.random(in: 1000...9999))",
+                model: "claude-haiku-4.5"
+            )
+            do {
+                for try await event in stream {
+                    switch event {
+                    case .status(let text):
+                        events.append("status:\(text)")
+                    case .toolUse(let name, _):
+                        events.append("tool:\(name)")
+                    case .delta(let chunk):
+                        events.append("delta:\(chunk.prefix(20))")
+                    case .done(let text, _):
+                        events.append("done:\(text.prefix(30))")
+                        gotDone = true
+                    case .error(let text):
+                        events.append("error:\(text)")
+                    }
+                }
+            } catch {
+                events.append("threw:\(error)")
+            }
+            check(!events.isEmpty, "should receive at least one SSE event")
+            check(gotDone, "should receive a done event")
+            check(events.first?.hasPrefix("status:") == true, "first event should be status")
+            print("    ✓ (received \(events.count) events: \(events.prefix(3).joined(separator: ", "))...)")
+        } else {
+            print("    ⏭ (aidaemon not healthy, skipping)")
+        }
+    } else {
+        print("    ⏭ (no config, skipping)")
+    }
+}
+
+// ============================================================
 // MARK: - Results
 // ============================================================
 

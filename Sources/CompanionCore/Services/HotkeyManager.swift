@@ -32,7 +32,7 @@ public final class HotkeyManager {
 
         // Install event handler
         let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
-            MainActor.assumeIsolated {
+            Task { @MainActor in
                 HotkeyManager.shared?.onHotkey?()
             }
             return noErr
