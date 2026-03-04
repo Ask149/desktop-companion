@@ -152,12 +152,15 @@ struct OverlayContentView: View {
             VStack(spacing: 30) {
                 Spacer()
 
-                // The face
+                // The face — tap to interrupt speech and start listening
                 FaceView(
                     mood: state.mood,
                     mouthOpenness: state.mouthOpenness,
                     blinkAmount: state.blinkAmount
                 )
+                .onTapGesture {
+                    state.interruptSpeech()
+                }
 
                 // Greeting text
                 if !state.greeting.isEmpty {

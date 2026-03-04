@@ -48,12 +48,27 @@ public class CompanionState: ObservableObject {
     private var heartbeatTimer: Timer?
     private var moodTimer: Timer?
     private var blinkTimer: Timer?
-    private var overlayTimeoutTimer: Timer?
 
     /// Model for quick interactions (mood, greeting, casual chat).
     public let fastModel: String
     /// Model for complex tasks (from config's chat_model, or default).
     public let strongModel: String
+
+    /// System prompt for voice overlay — keeps responses conversational, brief, and markdown-free.
+    private let voiceSystemPrompt = """
+        You are Friday, a voice AI companion on a Mac desktop. You are speaking aloud to Ashish.
+
+        CRITICAL RULES:
+        - You are a VOICE interface. Your responses will be spoken aloud by text-to-speech.
+        - Keep responses to 2-4 sentences. Be concise and conversational.
+        - NEVER use markdown formatting: no **bold**, no *italic*, no # headers, no - bullets, no `code`, no [links](url).
+        - NEVER use emojis or emoticons. Plain text only.
+        - Write in natural spoken English. Use plain text only.
+        - Don't list things with bullet points. Instead, mention them conversationally.
+        - If asked something complex, give the key insight first, then offer to elaborate.
+        - Be warm but direct. You're a companion, not a document generator.
+        - When using tools, just share the result naturally — don't describe the tool or format.
+        """
 
     public init() {
         // Load aidaemon config
@@ -74,9 +89,14 @@ public class CompanionState: ObservableObject {
         }
         voiceOutput.onFinished = { [weak self] in
             self?.mouthOpenness = 0
-            // Restart listening after Friday finishes speaking
+            // Restart listening after Friday finishes speaking,
+            // with a short delay to avoid picking up tail-end audio
             if self?.isOverlayVisible == true {
-                self?.voiceInput.startListening()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard self?.isOverlayVisible == true else { return }
+                    guard self?.voiceOutput.isSpeaking == false else { return }
+                    self?.voiceInput.startListening()
+                }
             }
         }
 
@@ -84,7 +104,6 @@ public class CompanionState: ObservableObject {
         voiceInput.onFinalResult = { [weak self] text in
             guard let self = self, !text.isEmpty else { return }
             self.partialTranscription = ""
-            if self.isOverlayVisible { self.resetOverlayTimeout() }
             Task { await self.handleVoiceInput(text) }
         }
         voiceInput.onPartialResult = { [weak self] text in
@@ -153,20 +172,29 @@ public class CompanionState: ObservableObject {
 
         isOverlayVisible = true
         greeting = ""
-        // Safety timeout — auto-dismiss after 60s of no interaction
-        resetOverlayTimeout()
         Task {
             await generateGreeting()
-            // Start listening after greeting
-            voiceInput.startListening()
+            // Don't start listening here — onFinished callback handles it
+            // after the greeting TTS completes, preventing echo
+        }
+    }
+
+    /// Interrupt speech without dismissing the overlay — tap to stop TTS and start listening.
+    public func interruptSpeech() {
+        guard isOverlayVisible, voiceOutput.isSpeaking else { return }
+        voiceOutput.stop()
+        mouthOpenness = 0
+        // Brief delay before starting mic to avoid picking up tail-end audio
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard self?.isOverlayVisible == true else { return }
+            guard self?.voiceOutput.isSpeaking == false else { return }
+            self?.voiceInput.startListening()
         }
     }
 
     /// Hide the overlay, stop voice, preserve session.
     public func hideOverlay() {
         isOverlayVisible = false
-        overlayTimeoutTimer?.invalidate()
-        overlayTimeoutTimer = nil
         voiceInput.stopListening()
         voiceOutput.stop()
         partialTranscription = ""
@@ -233,13 +261,15 @@ public class CompanionState: ObservableObject {
 
         var accumulated = ""
         var spokenUpTo = 0 // character index up to which we've queued TTS
+        var sentencesSpoken = 0
         var finalText = ""
 
         do {
             let stream = client.chatStream(
                 message: message,
                 sessionID: session.sessionID,
-                model: model
+                model: model,
+                systemPrompt: voiceSystemPrompt
             )
 
             for try await event in stream {
@@ -253,7 +283,7 @@ public class CompanionState: ObservableObject {
                     accumulated += chunk
                     partialAssistantResponse = accumulated
                     // Speak completed sentences as they arrive
-                    speakCompletedSentences(accumulated, spokenUpTo: &spokenUpTo)
+                    speakCompletedSentences(accumulated, spokenUpTo: &spokenUpTo, sentencesSpoken: &sentencesSpoken)
                 case .done(let text, _):
                     finalText = text
                 case .error(let text):
@@ -273,7 +303,7 @@ public class CompanionState: ObservableObject {
 
         // Speak any remaining unspoken text (use accumulated for correct offset)
         let sourceForSpeech = accumulated.isEmpty ? reply : accumulated
-        if spokenUpTo < sourceForSpeech.count {
+        if sentencesSpoken < maxStreamingSentences && spokenUpTo < sourceForSpeech.count {
             let unspoken = String(sourceForSpeech.dropFirst(spokenUpTo)).trimmingCharacters(in: .whitespaces)
             if !unspoken.isEmpty {
                 voiceOutput.isMuted = isMuted
@@ -284,13 +314,14 @@ public class CompanionState: ObservableObject {
             voiceOutput.isMuted = isMuted
             voiceOutput.speak(reply)
         }
-
-        resetOverlayTimeout()
     }
 
-    /// Detect completed sentences in the accumulated text and enqueue them for TTS.
-    /// Updates spokenUpTo to track what's already been queued for TTS.
-    private func speakCompletedSentences(_ text: String, spokenUpTo: inout Int) {
+    /// Maximum sentences to speak during streaming before going silent.
+    private let maxStreamingSentences = 5
+
+    private func speakCompletedSentences(_ text: String, spokenUpTo: inout Int, sentencesSpoken: inout Int) {
+        guard sentencesSpoken < maxStreamingSentences else { return }
+
         let sentenceEnders: [Character] = [".", "!", "?"]
         var lastSentenceEnd = spokenUpTo
 
@@ -298,8 +329,6 @@ public class CompanionState: ObservableObject {
             let offset = text.distance(from: text.startIndex, to: i)
             guard offset >= spokenUpTo else { continue }
             if sentenceEnders.contains(text[i]) {
-                // Require sentence ender followed by whitespace or end-of-string
-                // to avoid false triggers on abbreviations like "Dr." or "3.14"
                 let nextIdx = text.index(after: i)
                 if nextIdx == text.endIndex || text[nextIdx].isWhitespace {
                     lastSentenceEnd = offset + 1
@@ -313,22 +342,14 @@ public class CompanionState: ObservableObject {
             let sentence = String(text[startIdx..<endIdx]).trimmingCharacters(in: .whitespaces)
             if !sentence.isEmpty {
                 voiceOutput.isMuted = isMuted
-                voiceOutput.enqueue(sentence) // enqueue — don't interrupt current speech
+                voiceOutput.enqueue(sentence)
+                sentencesSpoken += 1
             }
             spokenUpTo = lastSentenceEnd
         }
     }
 
     // MARK: - Private
-
-    private func resetOverlayTimeout() {
-        overlayTimeoutTimer?.invalidate()
-        overlayTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.hideOverlay()
-            }
-        }
-    }
 
     private func handleVoiceInput(_ text: String) async {
         await sendChat(message: text)
@@ -361,7 +382,8 @@ public class CompanionState: ObservableObject {
             let response = try await client.chat(
                 message: prompt,
                 sessionID: "friday-greeting",
-                model: fastModel
+                model: fastModel,
+                systemPrompt: voiceSystemPrompt
             )
             greeting = response.reply
         } catch {

@@ -65,7 +65,7 @@ public final class AidaemonClient: Sendable {
     // MARK: - Chat
 
     /// Send a chat message and get a response.
-    public func chat(message: String, sessionID: String = "companion", model: String? = nil) async throws -> ChatResponse {
+    public func chat(message: String, sessionID: String = "companion", model: String? = nil, systemPrompt: String? = nil) async throws -> ChatResponse {
         let url = baseURL.appendingPathComponent("chat")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -76,6 +76,9 @@ public final class AidaemonClient: Sendable {
         var body: [String: String] = ["message": message, "session_id": sessionID]
         if let model = model {
             body["model"] = model
+        }
+        if let systemPrompt = systemPrompt {
+            body["system_prompt"] = systemPrompt
         }
         request.httpBody = try JSONEncoder().encode(body)
 
@@ -123,7 +126,8 @@ public final class AidaemonClient: Sendable {
     public func chatStream(
         message: String,
         sessionID: String = "companion",
-        model: String? = nil
+        model: String? = nil,
+        systemPrompt: String? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -140,6 +144,9 @@ public final class AidaemonClient: Sendable {
                     var body: [String: String] = ["message": message, "session_id": sessionID]
                     if let model = model {
                         body["model"] = model
+                    }
+                    if let systemPrompt = systemPrompt {
+                        body["system_prompt"] = systemPrompt
                     }
                     request.httpBody = try JSONEncoder().encode(body)
 
