@@ -14,6 +14,9 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
     public private(set) var isSpeaking = false
     public var isMuted = false
 
+    /// Accumulates the text actually sent to TTS. Read by CompanionState for the persistent title.
+    public private(set) var lastSpokenText: String = ""
+
     private let synthesizer = AVSpeechSynthesizer()
     private var mouthTimer: Timer?
     private var mouthPhase: Double = 0
@@ -45,6 +48,7 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
         pendingUtterances = 0
 
         let spokenText = truncateToSentences(text, max: maxSpokenSentences)
+        lastSpokenText = spokenText
         enqueueUtterance(spokenText)
     }
 
@@ -54,6 +58,11 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
     public func enqueue(_ text: String) {
         guard !isMuted else { return }
         guard !text.isEmpty else { return }
+        if lastSpokenText.isEmpty {
+            lastSpokenText = text
+        } else {
+            lastSpokenText += " " + text
+        }
         enqueueUtterance(text)
     }
 
@@ -63,6 +72,11 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
         pendingUtterances = 0
         stopMouthAnimation()
         isSpeaking = false
+    }
+
+    /// Reset spoken text tracking — call at the start of each interaction.
+    public func resetLastSpokenText() {
+        lastSpokenText = ""
     }
 
     // MARK: - AVSpeechSynthesizerDelegate
@@ -118,7 +132,7 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
 
     /// Create an utterance with consistent voice settings and enqueue it.
     private func enqueueUtterance(_ text: String) {
-        let utterance = AVSpeechUtterance(string: stripMarkdown(text))
+        let utterance = AVSpeechUtterance(string: TextCleaner.clean(text))
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = 1.0
         utterance.volume = 1.0
@@ -136,28 +150,6 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
             startMouthAnimation()
         }
         synthesizer.speak(utterance)
-    }
-
-    /// Strip markdown syntax so TTS reads clean text.
-    private func stripMarkdown(_ text: String) -> String {
-        var result = text
-        // Bold: **text** → text
-        result = result.replacingOccurrences(of: "\\*\\*(.+?)\\*\\*", with: "$1", options: .regularExpression)
-        // Italic: *text* → text
-        result = result.replacingOccurrences(of: "\\*(.+?)\\*", with: "$1", options: .regularExpression)
-        // Headers: # Heading → Heading
-        result = result.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
-        // Inline code: `code` → code
-        result = result.replacingOccurrences(of: "`([^`]+)`", with: "$1", options: .regularExpression)
-        // Code fences: ``` → (remove)
-        result = result.replacingOccurrences(of: "```[^\\n]*\\n?", with: "", options: .regularExpression)
-        // Links: [text](url) → text
-        result = result.replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
-        // List markers: - item or * item → item
-        result = result.replacingOccurrences(of: "(?m)^[\\-\\*]\\s+", with: "", options: .regularExpression)
-        // Blockquotes: > text → text
-        result = result.replacingOccurrences(of: "(?m)^>\\s+", with: "", options: .regularExpression)
-        return result
     }
 
     private func truncateToSentences(_ text: String, max: Int) -> String {

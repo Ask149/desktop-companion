@@ -80,6 +80,16 @@ public final class VoiceInput {
         recognitionRequest = request
 
         let inputNode = audioEngine.inputNode
+
+        // Enable Voice Processing IO for acoustic echo cancellation.
+        // This must be set BEFORE getting the output format (format changes with VP enabled).
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+        } catch {
+            // Non-fatal — fall back to temporal echo prevention (1s delay after TTS)
+            print("[VoiceInput] Voice processing unavailable: \(error.localizedDescription)")
+        }
+
         let recordingFormat = inputNode.outputFormat(forBus: 0)
 
         // Install tap via nonisolated helper — AVAudio calls the tap block

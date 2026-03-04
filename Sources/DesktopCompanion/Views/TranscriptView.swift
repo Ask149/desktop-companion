@@ -89,32 +89,6 @@ struct TranscriptView: View {
 
     @ViewBuilder
     private func markdownText(_ text: String) -> some View {
-        Text(Self.stripForDisplay(text))
-    }
-
-    /// Strip markdown syntax and emojis for clean voice-UI display.
-    static func stripForDisplay(_ text: String) -> String {
-        var result = text
-        // Bold: **text** → text
-        result = result.replacingOccurrences(of: "\\*\\*(.+?)\\*\\*", with: "$1", options: .regularExpression)
-        // Italic: *text* → text
-        result = result.replacingOccurrences(of: "\\*(.+?)\\*", with: "$1", options: .regularExpression)
-        // Stray asterisks (unclosed bold/italic) — plain string match, not regex
-        result = result.replacingOccurrences(of: "*", with: "")
-        // Headers: # Heading → Heading
-        result = result.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
-        // Inline code: `code` → code
-        result = result.replacingOccurrences(of: "`([^`]+)`", with: "$1", options: .regularExpression)
-        // Code fences: ``` → (remove)
-        result = result.replacingOccurrences(of: "```[^\\n]*\\n?", with: "", options: .regularExpression)
-        // Links: [text](url) → text
-        result = result.replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
-        // List markers: - item → item
-        result = result.replacingOccurrences(of: "(?m)^[\\-]\\s+", with: "", options: .regularExpression)
-        // Blockquotes: > text → text
-        result = result.replacingOccurrences(of: "(?m)^>\\s+", with: "", options: .regularExpression)
-        // Strip emojis (keep ASCII chars like digits and punctuation)
-        result = result.unicodeScalars.filter { !$0.properties.isEmoji || $0.isASCII }.map(String.init).joined()
-        return result
+        Text(TextCleaner.clean(text))
     }
 }

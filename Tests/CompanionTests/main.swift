@@ -577,6 +577,84 @@ do {
 }
 
 // ============================================================
+// MARK: - TextCleaner Tests
+// ============================================================
+
+print("\nRunning TextCleaner tests...\n")
+
+// Test: strips bold
+do {
+    print("  test: stripsBold")
+    let result = TextCleaner.clean("Hello **world** today")
+    check(result == "Hello world today", "should strip bold, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: strips italic
+do {
+    print("  test: stripsItalic")
+    let result = TextCleaner.clean("Hello *world* today")
+    check(result == "Hello world today", "should strip italic, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: strips emojis
+do {
+    print("  test: stripsEmojis")
+    let result = TextCleaner.clean("Hello 🌍 world 🎉")
+    check(result == "Hello world", "should strip emojis, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: strips headers
+do {
+    print("  test: stripsHeaders")
+    let result = TextCleaner.clean("## My Header")
+    check(result == "My Header", "should strip header, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: strips code blocks
+do {
+    print("  test: stripsCodeBlocks")
+    let result = TextCleaner.clean("Use `print()` to debug")
+    check(result == "Use print() to debug", "should strip inline code, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: strips links
+do {
+    print("  test: stripsLinks")
+    let result = TextCleaner.clean("Visit [Google](https://google.com) now")
+    check(result == "Visit Google now", "should strip links, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: handles mixed markdown
+do {
+    print("  test: handlesMixed")
+    let result = TextCleaner.clean("**Bold** and *italic* with 🎉 emoji")
+    check(result == "Bold and italic with emoji", "should strip all, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: plain text passes through
+do {
+    print("  test: plainTextPassesThrough")
+    let result = TextCleaner.clean("Just a normal sentence.")
+    check(result == "Just a normal sentence.", "should pass through, got '\(result)'")
+    print("    ✓")
+}
+
+// Test: stray asterisks removed
+do {
+    print("  test: strayAsterisks")
+    let result = TextCleaner.clean("** unclosed bold")
+    check(!result.contains("*"), "should remove stray asterisks, got '\(result)'")
+    print("    ✓")
+}
+
+// ============================================================
 // MARK: - Results
 // ============================================================
 

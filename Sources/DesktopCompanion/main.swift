@@ -171,12 +171,16 @@ struct OverlayContentView: View {
                     state.interruptSpeech()
                 }
 
-                // Title text — shows greeting initially, then live AI response during conversation
-                let displayText = state.partialAssistantResponse.isEmpty
-                    ? state.greeting
-                    : state.partialAssistantResponse
+                // Title text — shows live AI response during streaming,
+                // then persists as the spoken summary after speech ends.
+                // Falls back to greeting only on initial overlay open.
+                let displayText = !state.partialAssistantResponse.isEmpty
+                    ? state.partialAssistantResponse
+                    : !state.lastSpokenText.isEmpty
+                        ? state.lastSpokenText
+                        : state.greeting
                 if !displayText.isEmpty {
-                    Text(TranscriptView.stripForDisplay(displayText))
+                    Text(TextCleaner.clean(displayText))
                         .font(.system(.title3, design: .rounded))
                         .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)

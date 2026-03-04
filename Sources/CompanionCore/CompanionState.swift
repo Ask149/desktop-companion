@@ -30,6 +30,9 @@ public class CompanionState: ObservableObject {
     @Published public var partialAssistantResponse: String = ""
     @Published public var streamStatus: String = ""
 
+    /// The text that was last spoken by TTS — persists on screen after speech ends.
+    @Published public var lastSpokenText: String = ""
+
     // --- Voice ---
     @Published public var isMuted: Bool = false
     @Published public var isVoiceListening: Bool = false
@@ -41,6 +44,7 @@ public class CompanionState: ObservableObject {
     public let moodEngine: MoodEngine
     public let voiceInput = VoiceInput()
     public let voiceOutput = VoiceOutput()
+    public let interruptListener = InterruptListener()
     public let idleDetector = IdleDetector()
     public let hotkeyManager = HotkeyManager()
 
@@ -88,6 +92,7 @@ public class CompanionState: ObservableObject {
             self?.mouthOpenness = openness
         }
         voiceOutput.onFinished = { [weak self] in
+            self?.interruptListener.stop()
             self?.mouthOpenness = 0
             // Restart listening after Friday finishes speaking,
             // with a delay to avoid picking up tail-end audio/echo.
@@ -101,6 +106,11 @@ public class CompanionState: ObservableObject {
                     self?.voiceInput.startListening()
                 }
             }
+        }
+
+        // Wire interrupt listener → speech interrupt
+        interruptListener.onInterrupt = { [weak self] in
+            self?.interruptSpeech()
         }
 
         // Wire voice input → chat
@@ -186,6 +196,7 @@ public class CompanionState: ObservableObject {
     public func interruptSpeech() {
         guard isOverlayVisible, voiceOutput.isSpeaking else { return }
         voiceOutput.stop()
+        interruptListener.stop()
         mouthOpenness = 0
         // Brief delay before starting mic to avoid picking up tail-end audio
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -200,7 +211,9 @@ public class CompanionState: ObservableObject {
         isOverlayVisible = false
         voiceInput.stopListening()
         voiceOutput.stop()
+        interruptListener.stop()
         partialTranscription = ""
+        lastSpokenText = ""
     }
 
     // MARK: - Chat
@@ -225,6 +238,7 @@ public class CompanionState: ObservableObject {
         deriveMode()
         defer {
             isChatting = false
+            lastSpokenText = TextCleaner.clean(voiceOutput.lastSpokenText)
             partialAssistantResponse = ""
             streamStatus = ""
             deriveMode()
@@ -261,6 +275,9 @@ public class CompanionState: ObservableObject {
     /// Streaming chat path — used when overlay is visible for progressive response display.
     private func sendChatStreaming(client: AidaemonClient, message: String, model: String) async {
         voiceInput.stopListening() // Don't listen while processing
+        voiceOutput.resetLastSpokenText()
+        // Start interrupt listener so user can say "stop" during AI speech
+        interruptListener.start()
 
         var accumulated = ""
         var spokenUpTo = 0 // character index up to which we've queued TTS
@@ -398,7 +415,10 @@ public class CompanionState: ObservableObject {
 
     private func speakGreeting() {
         voiceOutput.isMuted = isMuted
+        voiceOutput.resetLastSpokenText()
+        interruptListener.start()
         voiceOutput.speak(greeting)
+        lastSpokenText = TextCleaner.clean(voiceOutput.lastSpokenText)
     }
 
     private func startPolling() {
