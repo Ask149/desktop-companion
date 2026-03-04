@@ -93,14 +93,14 @@ struct TranscriptView: View {
     }
 
     /// Strip markdown syntax and emojis for clean voice-UI display.
-    private static func stripForDisplay(_ text: String) -> String {
+    static func stripForDisplay(_ text: String) -> String {
         var result = text
         // Bold: **text** → text
         result = result.replacingOccurrences(of: "\\*\\*(.+?)\\*\\*", with: "$1", options: .regularExpression)
         // Italic: *text* → text
         result = result.replacingOccurrences(of: "\\*(.+?)\\*", with: "$1", options: .regularExpression)
-        // Stray asterisks (unclosed bold/italic)
-        result = result.replacingOccurrences(of: "\\*", with: "")
+        // Stray asterisks (unclosed bold/italic) — plain string match, not regex
+        result = result.replacingOccurrences(of: "*", with: "")
         // Headers: # Heading → Heading
         result = result.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
         // Inline code: `code` → code

@@ -29,6 +29,8 @@ final class OverlayWindow {
     private let debounceInterval: TimeInterval = 3
 
     var onDismiss: (() -> Void)?
+    /// Called when Escape is pressed — caller decides whether to interrupt speech or dismiss.
+    var onEscape: (() -> Void)?
 
     /// Show the overlay with fade-in animation.
     func show(contentView: some View) {
@@ -109,7 +111,11 @@ final class OverlayWindow {
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             Task { @MainActor in
-                self?.dismiss()
+                if event.keyCode == 53 { // Escape key
+                    self?.onEscape?()
+                } else {
+                    self?.dismiss()
+                }
             }
             return event
         }
@@ -120,9 +126,13 @@ final class OverlayWindow {
                 self?.handleMouseMove(event)
             }
         }
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             Task { @MainActor in
-                self?.dismiss()
+                if event.keyCode == 53 { // Escape key
+                    self?.onEscape?()
+                } else {
+                    self?.dismiss()
+                }
             }
         }
     }

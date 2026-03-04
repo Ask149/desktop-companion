@@ -19,7 +19,7 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
     private var mouthPhase: Double = 0
 
     /// Maximum sentences to speak (truncate long responses).
-    public let maxSpokenSentences = 3
+    public let maxSpokenSentences = 2
 
     /// Number of utterances currently queued or speaking.
     private var pendingUtterances = 0

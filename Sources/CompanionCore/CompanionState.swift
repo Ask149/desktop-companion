@@ -60,7 +60,7 @@ public class CompanionState: ObservableObject {
 
         CRITICAL RULES:
         - You are a VOICE interface. Your responses will be spoken aloud by text-to-speech.
-        - Keep responses to 2-4 sentences. Be concise and conversational.
+        - Keep responses to 1-2 sentences. Be concise and conversational.
         - NEVER use markdown formatting: no **bold**, no *italic*, no # headers, no - bullets, no `code`, no [links](url).
         - NEVER use emojis or emoticons. Plain text only.
         - Write in natural spoken English. Use plain text only.
@@ -90,10 +90,13 @@ public class CompanionState: ObservableObject {
         voiceOutput.onFinished = { [weak self] in
             self?.mouthOpenness = 0
             // Restart listening after Friday finishes speaking,
-            // with a short delay to avoid picking up tail-end audio
+            // with a delay to avoid picking up tail-end audio/echo.
+            // Guard on isChatting prevents mid-stream mic restart
+            // (between sentences during streaming TTS).
             if self?.isOverlayVisible == true {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                     guard self?.isOverlayVisible == true else { return }
+                    guard self?.isChatting == false else { return }
                     guard self?.voiceOutput.isSpeaking == false else { return }
                     self?.voiceInput.startListening()
                 }
@@ -185,7 +188,7 @@ public class CompanionState: ObservableObject {
         voiceOutput.stop()
         mouthOpenness = 0
         // Brief delay before starting mic to avoid picking up tail-end audio
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard self?.isOverlayVisible == true else { return }
             guard self?.voiceOutput.isSpeaking == false else { return }
             self?.voiceInput.startListening()
@@ -317,7 +320,7 @@ public class CompanionState: ObservableObject {
     }
 
     /// Maximum sentences to speak during streaming before going silent.
-    private let maxStreamingSentences = 5
+    private let maxStreamingSentences = 3
 
     private func speakCompletedSentences(_ text: String, spokenUpTo: inout Int, sentencesSpoken: inout Int) {
         guard sentencesSpoken < maxStreamingSentences else { return }

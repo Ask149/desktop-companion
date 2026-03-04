@@ -49,6 +49,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.onDismiss = { [weak self] in
             self?.state.hideOverlay()
         }
+        // Escape key: interrupt speech if speaking, otherwise dismiss
+        overlay.onEscape = { [weak self] in
+            guard let self = self else { return }
+            if self.state.voiceOutput.isSpeaking {
+                self.state.interruptSpeech()
+            } else {
+                self.state.hideOverlay()
+            }
+        }
 
         // Show/hide overlay based on state
         state.$isOverlayVisible
@@ -162,13 +171,18 @@ struct OverlayContentView: View {
                     state.interruptSpeech()
                 }
 
-                // Greeting text
-                if !state.greeting.isEmpty {
-                    Text(state.greeting)
+                // Title text — shows greeting initially, then live AI response during conversation
+                let displayText = state.partialAssistantResponse.isEmpty
+                    ? state.greeting
+                    : state.partialAssistantResponse
+                if !displayText.isEmpty {
+                    Text(TranscriptView.stripForDisplay(displayText))
                         .font(.system(.title3, design: .rounded))
                         .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 60)
+                        .lineLimit(3)
+                        .animation(.easeOut(duration: 0.15), value: displayText)
                 }
 
                 // Mood indicator
