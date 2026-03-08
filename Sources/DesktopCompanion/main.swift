@@ -153,57 +153,78 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 /// The SwiftUI content shown inside the full-screen overlay.
 struct OverlayContentView: View {
     @ObservedObject var state: CompanionState
+    @State private var showInterruptHint = false
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        let expr = state.mood.expression
+        let c = expr.color
+        let moodColor = Color(red: c.red, green: c.green, blue: c.blue)
 
-            VStack(spacing: 30) {
+        ZStack {
+            // Ambient background replaces Color.black
+            BackgroundView(mood: state.mood)
+
+            VStack(spacing: 24) {
                 Spacer()
 
-                // The face — tap to interrupt speech and start listening
-                FaceView(
-                    mood: state.mood,
-                    mouthOpenness: state.mouthOpenness,
-                    blinkAmount: state.blinkAmount
-                )
-                .onTapGesture {
-                    state.interruptSpeech()
+                // Face with listening ring
+                ZStack {
+                    ListeningRingView(
+                        mood: state.mood,
+                        isListening: state.isVoiceListening
+                    )
+
+                    FaceView(
+                        mood: state.mood,
+                        mouthOpenness: state.mouthOpenness,
+                        blinkAmount: state.blinkAmount,
+                        isSpeaking: state.voiceOutput.isSpeaking
+                    )
+                    .onTapGesture {
+                        state.interruptSpeech()
+                    }
                 }
 
-                // Title text — shows live AI response during streaming,
-                // then persists as the spoken summary after speech ends.
-                // Falls back to greeting only on initial overlay open.
+                // Main response text
                 let displayText = !state.partialAssistantResponse.isEmpty
                     ? state.partialAssistantResponse
                     : !state.lastSpokenText.isEmpty
                         ? state.lastSpokenText
                         : state.greeting
+
                 if !displayText.isEmpty {
-                    Text(TextCleaner.clean(displayText))
-                        .font(.system(.title3, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 60)
-                        .lineLimit(3)
-                        .animation(.easeOut(duration: 0.15), value: displayText)
+                    StreamingTextView(
+                        text: displayText,
+                        isStreaming: !state.partialAssistantResponse.isEmpty,
+                        mood: state.mood
+                    )
                 }
 
-                // Mood indicator
-                Text(state.moodReason)
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.3))
+                // Mood indicator pill
+                if !state.moodReason.isEmpty {
+                    Text(state.moodReason)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(moodColor.opacity(0.08))
+                        )
+                }
 
-                // Thinking indicator (only show when chatting but no streaming content yet)
+                // Thinking indicator
                 if state.isChatting && state.partialAssistantResponse.isEmpty {
-                    HStack(spacing: 4) {
-                        Text("thinking")
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.4))
-                        ProgressView()
-                            .scaleEffect(0.5)
-                            .tint(.white.opacity(0.4))
-                    }
+                    ThinkingDotsView(mood: state.mood)
+                        .transition(.opacity)
+                }
+
+                // Tap to interrupt hint
+                if showInterruptHint {
+                    Text("tap face to interrupt")
+                        .font(.system(.caption2, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.2))
+                        .transition(.opacity)
                 }
 
                 Spacer()
@@ -213,23 +234,29 @@ struct OverlayContentView: View {
                     messages: state.sessionMessages,
                     partialTranscription: state.partialTranscription,
                     partialAssistantResponse: state.partialAssistantResponse,
-                    streamStatus: state.streamStatus
+                    streamStatus: state.streamStatus,
+                    mood: state.mood
                 )
 
-                // Listening indicator
-                if state.isVoiceListening {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(.red)
-                            .frame(width: 8, height: 8)
-                        Text("Listening...")
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.4))
-                    }
-                    .padding(.bottom, 20)
-                }
-
                 Spacer().frame(height: 40)
+            }
+        }
+        // Show interrupt hint when speaking, auto-dismiss after 2s
+        .onChange(of: state.voiceOutput.isSpeaking) { _, speaking in
+            if speaking {
+                withAnimation(FridayAnimation.micro) {
+                    showInterruptHint = true
+                }
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    withAnimation(FridayAnimation.micro) {
+                        showInterruptHint = false
+                    }
+                }
+            } else {
+                withAnimation(FridayAnimation.micro) {
+                    showInterruptHint = false
+                }
             }
         }
     }

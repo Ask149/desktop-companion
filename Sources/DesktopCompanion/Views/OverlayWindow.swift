@@ -2,6 +2,7 @@
 import AppKit
 import SwiftUI
 import CompanionCore
+import QuartzCore
 
 /// NSPanel subclass that can become key — required for receiving
 /// mouseMoved and keyDown events with borderless style.
@@ -55,16 +56,37 @@ final class OverlayWindow {
         w.hidesOnDeactivate = false
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         w.contentView = NSHostingView(rootView: contentView)
+        w.contentView?.wantsLayer = true
 
-        // Start transparent, fade in
+        // Start transparent + slightly scaled down, animate in
         w.alphaValue = 0
         w.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
 
+        // Apply initial scale via layer transform
+        if let layer = w.contentView?.layer {
+            layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            layer.transform = CATransform3DMakeScale(0.97, 0.97, 1.0)
+        }
+
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.3
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1.0)
             w.animator().alphaValue = 1
+        }
+
+        // Explicit CABasicAnimation for layer scale (implicit animations are disabled on NSView layers)
+        if let layer = w.contentView?.layer {
+            let scaleAnim = CABasicAnimation(keyPath: "transform")
+            scaleAnim.fromValue = NSValue(caTransform3D: CATransform3DMakeScale(0.97, 0.97, 1.0))
+            scaleAnim.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+            scaleAnim.duration = 0.3
+            scaleAnim.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1.0)
+            scaleAnim.isRemovedOnCompletion = false
+            scaleAnim.fillMode = .forwards
+            layer.add(scaleAnim, forKey: "showScale")
+            layer.transform = CATransform3DIdentity
         }
 
         self.window = w
@@ -82,8 +104,22 @@ final class OverlayWindow {
         lastTransition = Date()
         removeMonitors()
 
+        // Explicit CABasicAnimation for layer scale on dismiss
+        if let layer = w.contentView?.layer {
+            let scaleAnim = CABasicAnimation(keyPath: "transform")
+            scaleAnim.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
+            scaleAnim.toValue = NSValue(caTransform3D: CATransform3DMakeScale(0.98, 0.98, 1.0))
+            scaleAnim.duration = 0.25
+            scaleAnim.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0.0, 1.0, 1.0)
+            scaleAnim.isRemovedOnCompletion = false
+            scaleAnim.fillMode = .forwards
+            layer.add(scaleAnim, forKey: "dismissScale")
+            layer.transform = CATransform3DMakeScale(0.98, 0.98, 1.0)
+        }
+
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.3
+            ctx.duration = 0.25
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0.0, 1.0, 1.0)
             w.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             // completionHandler runs on main thread for AppKit animations

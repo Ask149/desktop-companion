@@ -36,17 +36,40 @@ public struct FaceRenderer: Sendable {
         applyIdleAnimation(&context, animation: expr.idleAnimation,
                            phase: params.animationPhase, center: center)
 
-        // --- Outer glow ---
-        let glowRadius = faceWidth * 0.6 * expr.glowIntensity
-        if glowRadius > 0 {
-            let glowColor = color.opacity(0.15 * expr.glowIntensity)
-            let glowRect = CGRect(
-                x: center.x - glowRadius, y: center.y - glowRadius,
-                width: glowRadius * 2, height: glowRadius * 2
+        // --- Multi-layer bloom glow ---
+        let glowBase = faceWidth * 0.6 * expr.glowIntensity
+        if glowBase > 0 {
+            // Layer 1: Wide, faint outer glow
+            let outerRadius = glowBase * 1.8
+            let outerRect = CGRect(
+                x: center.x - outerRadius, y: center.y - outerRadius,
+                width: outerRadius * 2, height: outerRadius * 2
             )
             context.fill(
-                Path(ellipseIn: glowRect),
-                with: .color(glowColor)
+                Path(ellipseIn: outerRect),
+                with: .color(color.opacity(0.04 * expr.glowIntensity))
+            )
+
+            // Layer 2: Medium, softer middle glow
+            let midRadius = glowBase * 1.2
+            let midRect = CGRect(
+                x: center.x - midRadius, y: center.y - midRadius,
+                width: midRadius * 2, height: midRadius * 2
+            )
+            context.fill(
+                Path(ellipseIn: midRect),
+                with: .color(color.opacity(0.08 * expr.glowIntensity))
+            )
+
+            // Layer 3: Tight, bright inner glow
+            let innerRadius = glowBase * 0.7
+            let innerRect = CGRect(
+                x: center.x - innerRadius, y: center.y - innerRadius,
+                width: innerRadius * 2, height: innerRadius * 2
+            )
+            context.fill(
+                Path(ellipseIn: innerRect),
+                with: .color(color.opacity(0.15 * expr.glowIntensity))
             )
         }
 
@@ -60,7 +83,9 @@ public struct FaceRenderer: Sendable {
         let facePath = RoundedRectangle(cornerRadius: faceWidth * 0.25)
             .path(in: faceRect)
 
-        context.stroke(facePath, with: .color(color.opacity(0.6)), lineWidth: 1.5)
+        context.stroke(facePath, with: .color(color.opacity(0.6)), lineWidth: 2.0)
+        // Subtle face fill for depth
+        context.fill(facePath, with: .color(color.opacity(0.04)))
 
         // --- Eyes ---
         let eyeY = center.y - faceWidth * 0.12
@@ -172,6 +197,21 @@ public struct FaceRenderer: Sendable {
                 p.addLine(to: CGPoint(x: rightCenter.x + size, y: rightCenter.y))
             }
             context.stroke(rightPath, with: .color(color), lineWidth: 2.5)
+        }
+
+        // Eye highlights — small white dot at upper-right of each eye (skip when blinking)
+        if blink <= 0.5 {
+            let highlightRadius: CGFloat = size * 0.15
+            let highlightOffset = CGPoint(x: size * 0.3, y: -size * 0.3)
+            for eyeCenter in [leftCenter, rightCenter] {
+                let hCenter = CGPoint(x: eyeCenter.x + highlightOffset.x,
+                                      y: eyeCenter.y + highlightOffset.y)
+                let hRect = CGRect(x: hCenter.x - highlightRadius,
+                                   y: hCenter.y - highlightRadius,
+                                   width: highlightRadius * 2,
+                                   height: highlightRadius * 2)
+                context.fill(Path(ellipseIn: hRect), with: .color(.white.opacity(0.6)))
+            }
         }
     }
 
