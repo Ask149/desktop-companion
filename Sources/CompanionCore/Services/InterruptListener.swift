@@ -2,6 +2,9 @@
 import Foundation
 import Speech
 import AVFoundation
+import os.log
+
+private let logger = Logger(subsystem: "com.ask149.friday", category: "InterruptListener")
 
 /// Lightweight speech listener that runs DURING TTS to detect interrupt keywords.
 /// Uses its own AVAudioEngine with Voice Processing IO for echo cancellation.
@@ -15,17 +18,25 @@ public final class InterruptListener {
     /// Keywords that trigger an interrupt (checked against last few words of partial result).
     private let keywords: Set<String> = ["stop", "friday stop", "hey friday stop", "shut up"]
 
-    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-IN"))
+    private let speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
 
-    public init() {}
+    /// Initialize with a locale for speech recognition. Defaults to system locale.
+    public init(locale: Locale = .current) {
+        speechRecognizer = SFSpeechRecognizer(locale: locale)
+    }
 
     /// Start listening for interrupt keywords. Call when TTS begins.
     public func start() {
         guard !isListening else { return }
-        guard let recognizer = speechRecognizer, recognizer.isAvailable else { return }
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+            logger.warning("Interrupt listener: recognizer not available")
+            return
+        }
+
+        logger.info("Starting interrupt listener")
 
         // Cancel any existing task
         recognitionTask?.cancel()
@@ -34,21 +45,25 @@ public final class InterruptListener {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         if #available(macOS 13, *) {
-            request.requiresOnDeviceRecognition = true
+            if recognizer.supportsOnDeviceRecognition {
+                request.requiresOnDeviceRecognition = true
+            } else {
+                request.requiresOnDeviceRecognition = false
+            }
         }
         recognitionRequest = request
 
         let inputNode = audioEngine.inputNode
 
-        // Enable Voice Processing IO for echo cancellation —
-        // this lets us hear the user's voice through the AI's TTS output.
-        do {
-            try inputNode.setVoiceProcessingEnabled(true)
-        } catch {
-            print("[InterruptListener] Voice processing unavailable: \(error.localizedDescription)")
-        }
+        // NOTE: Voice Processing IO is intentionally DISABLED — see VoiceInput.swift.
+        // Echo cancellation is handled temporally (1s delay after TTS).
 
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+
+        guard recordingFormat.channelCount > 0 else {
+            logger.error("Audio input format has 0 channels")
+            return
+        }
 
         // Install tap — nonisolated to avoid @MainActor crash on audio thread
         Self.installAudioTap(on: inputNode, format: recordingFormat, request: request)
@@ -57,8 +72,9 @@ public final class InterruptListener {
         do {
             try audioEngine.start()
             isListening = true
+            logger.info("Interrupt listener started")
         } catch {
-            print("[InterruptListener] Audio engine failed: \(error.localizedDescription)")
+            logger.error("Audio engine failed: \(error.localizedDescription)")
             return
         }
 
@@ -73,6 +89,7 @@ public final class InterruptListener {
             },
             onError: { [weak self] in
                 Task { @MainActor in
+                    logger.warning("Interrupt listener recognition error, stopping")
                     self?.stop()
                 }
             }
@@ -82,12 +99,13 @@ public final class InterruptListener {
     /// Stop listening. Call when TTS ends or interrupt detected.
     public func stop() {
         guard isListening else { return }
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        recognitionRequest?.endAudio()
-        recognitionRequest = nil
+        logger.info("Stopping interrupt listener")
         recognitionTask?.cancel()
         recognitionTask = nil
+        recognitionRequest?.endAudio()
+        recognitionRequest = nil
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
         isListening = false
     }
 

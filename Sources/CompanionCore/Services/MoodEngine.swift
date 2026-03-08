@@ -20,9 +20,15 @@ public final class MoodEngine {
     /// The model to use for mood checks (fast + cheap).
     public let moodModel = "claude-haiku-4.5"
 
-    public init(client: AidaemonClient?, heartbeat: HeartbeatMonitor) {
+    /// Active hours range (used for sleepy mood detection).
+    public let activeHoursStart: Int
+    public let activeHoursEnd: Int
+
+    public init(client: AidaemonClient?, heartbeat: HeartbeatMonitor, activeHoursStart: Int = 8, activeHoursEnd: Int = 22) {
         self.client = client
         self.heartbeat = heartbeat
+        self.activeHoursStart = activeHoursStart
+        self.activeHoursEnd = activeHoursEnd
     }
 
     /// Refresh mood from system state + optionally LLM.
@@ -60,9 +66,9 @@ public final class MoodEngine {
             return stale ? .alert : .concerned
         }
 
-        // Sleeping: outside active hours (10 PM - 8 AM IST)
+        // Sleeping: outside active hours
         let hour = Calendar.current.component(.hour, from: Date())
-        if hour >= 22 || hour < 8 {
+        if hour >= activeHoursEnd || hour < activeHoursStart {
             return .sleepy
         }
 

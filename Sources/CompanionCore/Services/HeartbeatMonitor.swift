@@ -6,10 +6,19 @@ public final class HeartbeatMonitor: Sendable {
     public let stateDir: URL
     public let notesDir: URL
 
-    public init() {
+    /// Initialize with optional custom directories. Defaults to aidaemon heartbeat paths.
+    public init(stateDir: String? = nil, notesDir: String? = nil) {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        self.stateDir = home.appendingPathComponent(".config/opencode/heartbeat/state")
-        self.notesDir = home.appendingPathComponent(".config/opencode/notes")
+        if let dir = stateDir {
+            self.stateDir = URL(fileURLWithPath: (dir as NSString).expandingTildeInPath)
+        } else {
+            self.stateDir = home.appendingPathComponent(".config/aidaemon/heartbeat/state")
+        }
+        if let dir = notesDir {
+            self.notesDir = URL(fileURLWithPath: (dir as NSString).expandingTildeInPath)
+        } else {
+            self.notesDir = home.appendingPathComponent(".config/aidaemon/notes")
+        }
     }
 
     /// Read and parse all heartbeat state into an AwarenessReport.

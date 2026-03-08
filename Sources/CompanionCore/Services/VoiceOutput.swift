@@ -13,6 +13,8 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
 
     public private(set) var isSpeaking = false
     public var isMuted = false
+    /// Voice identifier for TTS. When nil, uses system default voice.
+    public var voiceIdentifier: String?
 
     /// Accumulates the text actually sent to TTS. Read by CompanionState for the persistent title.
     public private(set) var lastSpokenText: String = ""
@@ -137,8 +139,8 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
         utterance.pitchMultiplier = 1.0
         utterance.volume = 1.0
 
-        // Try to use a good voice
-        if let voice = AVSpeechSynthesisVoice(identifier: "com.apple.voice.premium.en-US.Zoe") {
+        // Use configured voice, falling back to system default
+        if let id = voiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: id) {
             utterance.voice = voice
         } else if let voice = AVSpeechSynthesisVoice(language: "en-US") {
             utterance.voice = voice

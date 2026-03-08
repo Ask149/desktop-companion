@@ -2,6 +2,9 @@
 import Foundation
 import Speech
 import AVFoundation
+import os.log
+
+private let logger = Logger(subsystem: "com.ask149.friday", category: "VoiceInput")
 
 /// Wraps SFSpeechRecognizer for on-device, real-time speech-to-text.
 /// Active only when the overlay is visible.
@@ -18,12 +21,15 @@ public final class VoiceInput {
 
     public private(set) var isListening = false {
         didSet {
-            if isListening != oldValue { onListeningChanged?(isListening) }
+            if isListening != oldValue {
+                logger.info("isListening changed: \(self.isListening)")
+                onListeningChanged?(isListening)
+            }
         }
     }
     public private(set) var isAuthorized = false
 
-    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-IN"))
+    private let speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
@@ -33,8 +39,14 @@ public final class VoiceInput {
     private var lastPartialText: String = ""
     /// Silence duration before treating partial result as final (seconds).
     private let silenceTimeout: TimeInterval = 2.0
+    /// Tracks consecutive recognition failures for auto-recovery.
+    private var consecutiveFailures: Int = 0
+    private let maxConsecutiveFailures = 3
 
-    public init() {}
+    /// Initialize with a locale for speech recognition. Defaults to system locale.
+    public init(locale: Locale = .current) {
+        speechRecognizer = SFSpeechRecognizer(locale: locale)
+    }
 
     /// Request microphone + speech recognition permissions.
     /// NOTE: SFSpeechRecognizer.requestAuthorization calls its completion handler
@@ -60,11 +72,19 @@ public final class VoiceInput {
 
     /// Start listening for speech. Call only when overlay is visible.
     public func startListening() {
-        guard isAuthorized, !isListening else { return }
+        logger.info("startListening() called — authorized=\(self.isAuthorized), isListening=\(self.isListening)")
+        guard isAuthorized, !isListening else {
+            logger.warning("startListening() blocked — authorized=\(self.isAuthorized), isListening=\(self.isListening)")
+            return
+        }
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+            let supportsOnDevice = speechRecognizer?.supportsOnDeviceRecognition ?? false
+            logger.error("Speech recognizer not available. supportsOnDevice=\(supportsOnDevice)")
             onError?("Speech recognizer not available")
             return
         }
+
+        logger.info("Recognizer available. supportsOnDevice=\(recognizer.supportsOnDeviceRecognition)")
 
         // Cancel any existing task
         recognitionTask?.cancel()
@@ -72,25 +92,37 @@ public final class VoiceInput {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        // Use on-device recognition if available (macOS 13+)
+        // Use on-device recognition if available, with fallback to server
         if #available(macOS 13, *) {
-            request.requiresOnDeviceRecognition = true
+            if recognizer.supportsOnDeviceRecognition {
+                request.requiresOnDeviceRecognition = true
+                logger.info("Using on-device recognition for \(recognizer.locale.identifier)")
+            } else {
+                // On-device model not downloaded — fall back to server recognition
+                request.requiresOnDeviceRecognition = false
+                logger.warning("On-device recognition not supported for \(recognizer.locale.identifier), falling back to server")
+            }
         }
 
         recognitionRequest = request
 
         let inputNode = audioEngine.inputNode
 
-        // Enable Voice Processing IO for acoustic echo cancellation.
-        // This must be set BEFORE getting the output format (format changes with VP enabled).
-        do {
-            try inputNode.setVoiceProcessingEnabled(true)
-        } catch {
-            // Non-fatal — fall back to temporal echo prevention (1s delay after TTS)
-            print("[VoiceInput] Voice processing unavailable: \(error.localizedDescription)")
-        }
+        // NOTE: Voice Processing IO (setVoiceProcessingEnabled) is intentionally DISABLED.
+        // It creates an aggregate device that causes the echo canceller to suppress ALL
+        // mic audio (hwmic has signal at -64dB but VP output is -120dB digital silence).
+        // Echo prevention is handled temporally: 1-second delay after TTS finishes
+        // before restarting speech recognition.
 
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+        logger.info("Audio format: \(recordingFormat.sampleRate)Hz, \(recordingFormat.channelCount)ch")
+
+        // Guard against invalid audio format (0 channels = no mic input)
+        guard recordingFormat.channelCount > 0 else {
+            logger.error("Audio input format has 0 channels — microphone not available")
+            onError?("Microphone not available")
+            return
+        }
 
         // Install tap via nonisolated helper — AVAudio calls the tap block
         // from its realtime queue, NOT the main thread. If the closure
@@ -102,7 +134,9 @@ public final class VoiceInput {
         do {
             try audioEngine.start()
             isListening = true
+            logger.info("Audio engine started, now listening")
         } catch {
+            logger.error("Audio engine failed to start: \(error.localizedDescription)")
             onError?("Audio engine failed: \(error.localizedDescription)")
             return
         }
@@ -115,12 +149,15 @@ public final class VoiceInput {
             onResult: { [weak self] text, isFinal in
                 Task { @MainActor in
                     guard let self else { return }
+                    self.consecutiveFailures = 0 // reset on any successful result
                     if isFinal {
+                        logger.info("Final result: \(text.prefix(80))")
                         self.silenceTimer?.invalidate()
                         self.silenceTimer = nil
                         self.lastPartialText = ""
                         self.onFinalResult?(text)
                     } else {
+                        logger.debug("Partial result: \(text.prefix(80))")
                         self.onPartialResult?(text)
                         // Reset silence timer — if no new results for 2s,
                         // treat current text as final. On-device recognition
@@ -130,11 +167,24 @@ public final class VoiceInput {
                     }
                 }
             },
-            onError: { [weak self] in
+            onError: { [weak self] errorMessage in
                 Task { @MainActor in
-                    self?.silenceTimer?.invalidate()
-                    self?.silenceTimer = nil
-                    self?.stopListening()
+                    guard let self else { return }
+                    logger.error("Recognition error: \(errorMessage)")
+                    self.silenceTimer?.invalidate()
+                    self.silenceTimer = nil
+                    self.consecutiveFailures += 1
+                    self.stopListening()
+                    // Auto-retry after transient failures (e.g., stale recognizer)
+                    if self.consecutiveFailures < self.maxConsecutiveFailures {
+                        logger.info("Auto-retrying startListening (attempt \(self.consecutiveFailures + 1)/\(self.maxConsecutiveFailures))")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                            self?.startListening()
+                        }
+                    } else {
+                        logger.error("Max consecutive failures (\(self.maxConsecutiveFailures)) reached, giving up")
+                        self.onError?("Speech recognition failed after \(self.maxConsecutiveFailures) attempts: \(errorMessage)")
+                    }
                 }
             }
         )
@@ -159,15 +209,15 @@ public final class VoiceInput {
         recognizer: SFSpeechRecognizer,
         request: SFSpeechAudioBufferRecognitionRequest,
         onResult: @escaping @Sendable (String, Bool) -> Void,
-        onError: @escaping @Sendable () -> Void
+        onError: @escaping @Sendable (String) -> Void
     ) -> SFSpeechRecognitionTask {
         return recognizer.recognitionTask(with: request) { result, error in
             if let result = result {
                 let text = result.bestTranscription.formattedString
                 onResult(text, result.isFinal)
             }
-            if error != nil {
-                onError()
+            if let error = error {
+                onError(error.localizedDescription)
             }
         }
     }
@@ -191,6 +241,7 @@ public final class VoiceInput {
 
     /// Stop listening for speech.
     public func stopListening() {
+        logger.info("stopListening() called — wasListening=\(self.isListening)")
         silenceTimer?.invalidate()
         silenceTimer = nil
         lastPartialText = ""
@@ -201,5 +252,10 @@ public final class VoiceInput {
         recognitionTask?.cancel()
         recognitionTask = nil
         isListening = false
+    }
+
+    /// Reset the failure counter — call after a successful interaction cycle.
+    public func resetFailureCount() {
+        consecutiveFailures = 0
     }
 }

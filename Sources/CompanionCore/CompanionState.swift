@@ -1,6 +1,9 @@
 // Sources/CompanionCore/CompanionState.swift
 import Foundation
 import Combine
+import os.log
+
+private let logger = Logger(subsystem: "com.ask149.friday", category: "CompanionState")
 
 /// Central observable state for Friday.
 /// Manages mood, session, voice, overlay lifecycle, and polling.
@@ -39,14 +42,15 @@ public class CompanionState: ObservableObject {
 
     // --- Services ---
     private var client: AidaemonClient?
-    public let heartbeat = HeartbeatMonitor()
+    public let heartbeat: HeartbeatMonitor
     public let session = SessionStore()
     public let moodEngine: MoodEngine
-    public let voiceInput = VoiceInput()
+    public let voiceInput: VoiceInput
     public let voiceOutput = VoiceOutput()
-    public let interruptListener = InterruptListener()
+    public let interruptListener: InterruptListener
     public let idleDetector = IdleDetector()
     public let hotkeyManager = HotkeyManager()
+    public let fridayConfig: FridayConfig
 
     private var healthTimer: Timer?
     private var heartbeatTimer: Timer?
@@ -59,39 +63,65 @@ public class CompanionState: ObservableObject {
     public let strongModel: String
 
     /// System prompt for voice overlay — keeps responses conversational, brief, and markdown-free.
-    private let voiceSystemPrompt = """
-        You are Friday, a voice AI companion on a Mac desktop. You are speaking aloud to Ashish.
-
-        CRITICAL RULES:
-        - You are a VOICE interface. Your responses will be spoken aloud by text-to-speech.
-        - Keep responses to 1-2 sentences. Be concise and conversational.
-        - NEVER use markdown formatting: no **bold**, no *italic*, no # headers, no - bullets, no `code`, no [links](url).
-        - NEVER use emojis or emoticons. Plain text only.
-        - Write in natural spoken English. Use plain text only.
-        - Don't list things with bullet points. Instead, mention them conversationally.
-        - If asked something complex, give the key insight first, then offer to elaborate.
-        - Be warm but direct. You're a companion, not a document generator.
-        - When using tools, just share the result naturally — don't describe the tool or format.
-        """
+    private let voiceSystemPrompt: String
 
     public init() {
-        // Load aidaemon config
+        // Load configs first (needed for component initialization)
         let config = AidaemonConfig.load()
+        let friday = FridayConfig.load()
+        self.fridayConfig = friday
+
+        // Initialize locale-dependent components
+        let locale = friday.locale.map { Locale(identifier: $0) } ?? .current
+        voiceInput = VoiceInput(locale: locale)
+        interruptListener = InterruptListener(locale: locale)
+
+        // Initialize heartbeat with config paths
+        heartbeat = HeartbeatMonitor(
+            stateDir: friday.heartbeatStateDir,
+            notesDir: friday.notesDir
+        )
+
         if let config = config {
             client = AidaemonClient(config: config)
         }
-        
+
         // Model routing: strong model from config, fast model always haiku
         strongModel = config?.chatModel ?? "claude-sonnet-4.5"
         fastModel = "claude-haiku-4.5"
-        
-        moodEngine = MoodEngine(client: client, heartbeat: heartbeat)
+
+        // Set voice system prompt with configured user name
+        let userName = friday.userName ?? "the user"
+        voiceSystemPrompt = """
+            You are Friday, a voice AI companion on a Mac desktop. You are speaking aloud to \(userName).
+
+            CRITICAL RULES:
+            - You are a VOICE interface. Your responses will be spoken aloud by text-to-speech.
+            - Keep responses to 1-2 sentences. Be concise and conversational.
+            - NEVER use markdown formatting: no **bold**, no *italic*, no # headers, no - bullets, no `code`, no [links](url).
+            - NEVER use emojis or emoticons. Plain text only.
+            - Write in natural spoken English. Use plain text only.
+            - Don't list things with bullet points. Instead, mention them conversationally.
+            - If asked something complex, give the key insight first, then offer to elaborate.
+            - Be warm but direct. You're a companion, not a document generator.
+            - When using tools, just share the result naturally — don't describe the tool or format.
+            """
+
+        moodEngine = MoodEngine(client: client, heartbeat: heartbeat,
+                               activeHoursStart: friday.activeHoursStart ?? 8,
+                               activeHoursEnd: friday.activeHoursEnd ?? 22)
+
+        // Configure components from FridayConfig
+        voiceOutput.voiceIdentifier = friday.voiceIdentifier
+        idleDetector.activeHoursStart = friday.activeHoursStart ?? 8
+        idleDetector.activeHoursEnd = friday.activeHoursEnd ?? 22
 
         // Wire voice output → mouth animation
         voiceOutput.onMouthUpdate = { [weak self] openness in
             self?.mouthOpenness = openness
         }
         voiceOutput.onFinished = { [weak self] in
+            logger.info("TTS finished, stopping interrupt listener, will restart voice input")
             self?.interruptListener.stop()
             self?.mouthOpenness = 0
             // Restart listening after Friday finishes speaking,
@@ -100,9 +130,19 @@ public class CompanionState: ObservableObject {
             // (between sentences during streaming TTS).
             if self?.isOverlayVisible == true {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    guard self?.isOverlayVisible == true else { return }
-                    guard self?.isChatting == false else { return }
-                    guard self?.voiceOutput.isSpeaking == false else { return }
+                    guard self?.isOverlayVisible == true else {
+                        logger.info("Overlay no longer visible, skipping voice restart")
+                        return
+                    }
+                    guard self?.isChatting == false else {
+                        logger.info("Still chatting, skipping voice restart")
+                        return
+                    }
+                    guard self?.voiceOutput.isSpeaking == false else {
+                        logger.info("Still speaking, skipping voice restart")
+                        return
+                    }
+                    logger.info("Restarting voice input after TTS")
                     self?.voiceInput.startListening()
                 }
             }
@@ -116,6 +156,7 @@ public class CompanionState: ObservableObject {
         // Wire voice input → chat
         voiceInput.onFinalResult = { [weak self] text in
             guard let self = self, !text.isEmpty else { return }
+            logger.info("Voice final result received: \(text.prefix(80))")
             self.partialTranscription = ""
             Task { await self.handleVoiceInput(text) }
         }
@@ -124,6 +165,9 @@ public class CompanionState: ObservableObject {
         }
         voiceInput.onListeningChanged = { [weak self] listening in
             self?.isVoiceListening = listening
+        }
+        voiceInput.onError = { errorMsg in
+            logger.error("VoiceInput error surfaced: \(errorMsg)")
         }
 
         // Wire session → published messages
@@ -177,10 +221,12 @@ public class CompanionState: ObservableObject {
     public func showOverlay(force: Bool = false) {
         guard !isOverlayVisible else { return }
 
-        // Don't show outside active hours (8 AM – 10 PM) unless forced (hotkey)
+        // Don't show outside active hours unless forced (hotkey)
         if !force {
             let hour = Calendar.current.component(.hour, from: Date())
-            guard hour >= 8 && hour < 22 else { return }
+            let start = fridayConfig.activeHoursStart ?? 8
+            let end = fridayConfig.activeHoursEnd ?? 22
+            guard hour >= start && hour < end else { return }
         }
 
         isOverlayVisible = true
@@ -484,7 +530,9 @@ public class CompanionState: ObservableObject {
             return
         }
         let hour = Calendar.current.component(.hour, from: Date())
-        if hour >= 22 || hour < 8 { mode = .sleeping; return }
+        let start = fridayConfig.activeHoursStart ?? 8
+        let end = fridayConfig.activeHoursEnd ?? 22
+        if hour >= end || hour < start { mode = .sleeping; return }
         if awarenessReport?.hasAlerts == true { mode = .alert; return }
         if isChatting { mode = .thinking; return }
         mode = .idle
