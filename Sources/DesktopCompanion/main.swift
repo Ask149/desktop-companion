@@ -49,6 +49,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.onDismiss = { [weak self] in
             self?.state.hideOverlay()
         }
+
+        // Permission gate: if user tries to open overlay without voice permissions,
+        // open System Settings instead of covering the permission dialog.
+        state.onPermissionNeeded = {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition") {
+                NSWorkspace.shared.open(url)
+            }
+        }
         // Escape key: interrupt speech if speaking, otherwise dismiss
         overlay.onEscape = { [weak self] in
             guard let self = self else { return }
@@ -153,7 +161,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 /// The SwiftUI content shown inside the full-screen overlay.
 struct OverlayContentView: View {
     @ObservedObject var state: CompanionState
-    @State private var showInterruptHint = false
 
     var body: some View {
         let expr = state.mood.expression
@@ -161,17 +168,19 @@ struct OverlayContentView: View {
         let moodColor = Color(red: c.red, green: c.green, blue: c.blue)
 
         ZStack {
-            // Ambient background replaces Color.black
+            // Ambient background
             BackgroundView(mood: state.mood)
 
-            VStack(spacing: 24) {
-                Spacer()
+            VStack(spacing: 0) {
+                // Top padding
+                Spacer().frame(height: 60)
 
-                // Face with listening ring
+                // Face with listening ring — scaled to 85% for more conversation room
                 ZStack {
                     ListeningRingView(
                         mood: state.mood,
-                        isListening: state.isVoiceListening
+                        isListening: state.isVoiceListening,
+                        audioLevel: state.audioLevel
                     )
 
                     FaceView(
@@ -184,80 +193,55 @@ struct OverlayContentView: View {
                         state.interruptSpeech()
                     }
                 }
+                .scaleEffect(0.85)
 
-                // Main response text
-                let displayText = !state.partialAssistantResponse.isEmpty
-                    ? state.partialAssistantResponse
-                    : !state.lastSpokenText.isEmpty
-                        ? state.lastSpokenText
-                        : state.greeting
+                // Unified state label — replaces mood pill + interrupt hint
+                stateLabel(moodColor: moodColor)
+                    .padding(.top, 8)
 
-                if !displayText.isEmpty {
-                    StreamingTextView(
-                        text: displayText,
-                        isStreaming: !state.partialAssistantResponse.isEmpty,
-                        mood: state.mood
-                    )
-                }
+                // 16px gap before conversation
+                Spacer().frame(height: 16)
 
-                // Mood indicator pill
-                if !state.moodReason.isEmpty {
-                    Text(state.moodReason)
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.4))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(moodColor.opacity(0.08))
-                        )
-                }
-
-                // Thinking indicator
-                if state.isChatting && state.partialAssistantResponse.isEmpty {
-                    ThinkingDotsView(mood: state.mood)
-                        .transition(.opacity)
-                }
-
-                // Tap to interrupt hint
-                if showInterruptHint {
-                    Text("tap face to interrupt")
-                        .font(.system(.caption2, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.2))
-                        .transition(.opacity)
-                }
-
-                Spacer()
-
-                // Transcript
-                TranscriptView(
+                // Conversation fills all remaining height, bottom-anchored
+                ConversationView(
                     messages: state.sessionMessages,
                     partialTranscription: state.partialTranscription,
                     partialAssistantResponse: state.partialAssistantResponse,
                     streamStatus: state.streamStatus,
+                    isChatting: state.isChatting,
                     mood: state.mood
                 )
 
+                // Bottom safe area
                 Spacer().frame(height: 40)
             }
         }
-        // Show interrupt hint when speaking, auto-dismiss after 2s
-        .onChange(of: state.voiceOutput.isSpeaking) { _, speaking in
-            if speaking {
-                withAnimation(FridayAnimation.micro) {
-                    showInterruptHint = true
-                }
-                Task {
-                    try? await Task.sleep(for: .seconds(2))
-                    withAnimation(FridayAnimation.micro) {
-                        showInterruptHint = false
-                    }
-                }
-            } else {
-                withAnimation(FridayAnimation.micro) {
-                    showInterruptHint = false
-                }
-            }
+    }
+
+    /// State indicator: shows current phase (listening / thinking / tap to interrupt / mood reason).
+    @ViewBuilder
+    private func stateLabel(moodColor: Color) -> some View {
+        let (text, color, opacity) = stateLabelContent(moodColor: moodColor)
+
+        Text(text)
+            .font(.system(.caption, design: .rounded))
+            .foregroundStyle(color.opacity(opacity))
+            .animation(FridayAnimation.micro, value: state.isVoiceListening)
+            .animation(FridayAnimation.micro, value: state.isChatting)
+            .animation(FridayAnimation.micro, value: state.voiceOutput.isSpeaking)
+    }
+
+    private func stateLabelContent(moodColor: Color) -> (String, Color, Double) {
+        if state.isVoiceListening && !state.isChatting {
+            return ("Listening", moodColor, 0.6)
+        } else if state.isChatting && state.partialAssistantResponse.isEmpty {
+            return ("Thinking...", .white, 0.4)
+        } else if state.voiceOutput.isSpeaking {
+            return ("tap to interrupt", .white, 0.2)
+        } else if !state.moodReason.isEmpty {
+            return (state.moodReason, .white, 0.3)
+        } else {
+            return ("", .white, 0)
         }
     }
 }

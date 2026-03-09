@@ -199,20 +199,7 @@ public struct FaceRenderer: Sendable {
             context.stroke(rightPath, with: .color(color), lineWidth: 2.5)
         }
 
-        // Eye highlights — small white dot at upper-right of each eye (skip when blinking)
-        if blink <= 0.5 {
-            let highlightRadius: CGFloat = size * 0.15
-            let highlightOffset = CGPoint(x: size * 0.3, y: -size * 0.3)
-            for eyeCenter in [leftCenter, rightCenter] {
-                let hCenter = CGPoint(x: eyeCenter.x + highlightOffset.x,
-                                      y: eyeCenter.y + highlightOffset.y)
-                let hRect = CGRect(x: hCenter.x - highlightRadius,
-                                   y: hCenter.y - highlightRadius,
-                                   width: highlightRadius * 2,
-                                   height: highlightRadius * 2)
-                context.fill(Path(ellipseIn: hRect), with: .color(.white.opacity(0.6)))
-            }
-        }
+
     }
 
     // MARK: - Mouth

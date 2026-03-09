@@ -39,6 +39,16 @@ public class CompanionState: ObservableObject {
     // --- Voice ---
     @Published public var isMuted: Bool = false
     @Published public var isVoiceListening: Bool = false
+    /// Microphone audio level (0.0–1.0), drives the audio-reactive listening ring.
+    @Published public var audioLevel: Double = 0
+
+    /// Buffered voice inputs received while Friday is busy (chatting or speaking).
+    /// Flushed as a single combined message when TTS finishes.
+    private var pendingInputs: [String] = []
+
+    /// Called when the overlay can't show because voice permissions aren't granted.
+    /// The UI layer (AppDelegate) should open System Settings → Privacy → Speech Recognition.
+    public var onPermissionNeeded: (() -> Void)?
 
     // --- Services ---
     private var client: AidaemonClient?
@@ -50,12 +60,20 @@ public class CompanionState: ObservableObject {
     public let interruptListener: InterruptListener
     public let idleDetector = IdleDetector()
     public let hotkeyManager = HotkeyManager()
+    public let audioOutputDetector = AudioOutputDetector()
     public let fridayConfig: FridayConfig
 
     private var healthTimer: Timer?
     private var heartbeatTimer: Timer?
     private var moodTimer: Timer?
     private var blinkTimer: Timer?
+
+    /// Post-TTS delay before restarting mic (seconds).
+    /// Adaptive: long delay for built-in speakers (echo risk), short for headphones/Bluetooth.
+    /// Echo word-matching (`isLikelyEcho`) provides a safety net.
+    private var postTTSDelay: TimeInterval {
+        audioOutputDetector.isBuiltInSpeaker ? 1.5 : 0.3
+    }
 
     /// Model for quick interactions (mood, greeting, casual chat).
     public let fastModel: String
@@ -126,24 +144,39 @@ public class CompanionState: ObservableObject {
             self?.mouthOpenness = 0
             // Restart listening after Friday finishes speaking,
             // with a delay to avoid picking up tail-end audio/echo.
+            // The delay must be long enough for speaker output buffers to drain
+            // AND room echo to decay — MacBook speakers and mic are centimeters apart.
             // Guard on isChatting prevents mid-stream mic restart
             // (between sentences during streaming TTS).
             if self?.isOverlayVisible == true {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    guard self?.isOverlayVisible == true else {
+                let delay = self?.postTTSDelay ?? 2.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self else { return }
+                    guard self.isOverlayVisible else {
                         logger.info("Overlay no longer visible, skipping voice restart")
                         return
                     }
-                    guard self?.isChatting == false else {
-                        logger.info("Still chatting, skipping voice restart")
-                        return
-                    }
-                    guard self?.voiceOutput.isSpeaking == false else {
+                    guard !self.voiceOutput.isSpeaking else {
                         logger.info("Still speaking, skipping voice restart")
                         return
                     }
-                    logger.info("Restarting voice input after TTS")
-                    self?.voiceInput.startListening()
+
+                    // Flush any buffered inputs that arrived while we were busy.
+                    // This sends them as a single combined message for a cohesive response.
+                    if !self.pendingInputs.isEmpty {
+                        let combined = self.pendingInputs.joined(separator: ". ")
+                        self.pendingInputs.removeAll()
+                        logger.info("Flushing \(combined.count) chars of buffered voice input")
+                        Task { await self.sendChat(message: combined) }
+                        return // sendChat will trigger TTS → onFinished → restart cycle
+                    }
+
+                    guard !self.isChatting else {
+                        logger.info("Still chatting, skipping voice restart")
+                        return
+                    }
+                    logger.info("Restarting voice input after TTS (post-delay)")
+                    self.voiceInput.startListening()
                 }
             }
         }
@@ -166,8 +199,26 @@ public class CompanionState: ObservableObject {
         voiceInput.onListeningChanged = { [weak self] listening in
             self?.isVoiceListening = listening
         }
-        voiceInput.onError = { errorMsg in
+        voiceInput.onAudioLevel = { [weak self] level in
+            Task { @MainActor in
+                guard let self else { return }
+                // Smoothing: fast attack (instant rise), slow decay (gentle fall)
+                self.audioLevel = level > self.audioLevel ? level : self.audioLevel * 0.7 + level * 0.3
+            }
+        }
+        voiceInput.onError = { [weak self] errorMsg in
             logger.error("VoiceInput error surfaced: \(errorMsg)")
+            // Speech recognizer timeouts are transient — Apple's SFSpeechRecognitionTask
+            // ends after ~60s of silence. If the overlay is still visible, keep listening.
+            guard let self, self.isOverlayVisible else { return }
+            guard !self.voiceOutput.isSpeaking, !self.isChatting else { return }
+            logger.info("Overlay still visible, restarting voice input after error recovery")
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.postTTSDelay) { [weak self] in
+                guard let self, self.isOverlayVisible else { return }
+                guard !self.voiceOutput.isSpeaking, !self.isChatting else { return }
+                self.voiceInput.resetFailureCount()
+                self.voiceInput.startListening()
+            }
         }
 
         // Wire session → published messages
@@ -190,14 +241,23 @@ public class CompanionState: ObservableObject {
             }
         }
 
-        // Start services
+        // Start services (except overlay triggers — those wait for permissions)
         startPolling()
-        idleDetector.start()
-        hotkeyManager.register()
         startBlinkLoop()
 
-        // Request voice permissions
-        Task { await voiceInput.requestAuthorization() }
+        // Request voice permissions, then enable overlay triggers
+        Task {
+            await voiceInput.requestAuthorization()
+            if voiceInput.isAuthorized {
+                logger.info("Voice permissions granted, enabling overlay triggers")
+                idleDetector.start()
+                hotkeyManager.register()
+            } else {
+                logger.warning("Voice permissions not granted — overlay triggers disabled until authorized")
+                // Register hotkey anyway so user can trigger permission flow
+                hotkeyManager.register()
+            }
+        }
 
         // Initial data load
         Task {
@@ -220,6 +280,15 @@ public class CompanionState: ObservableObject {
     /// - Parameter force: If true, bypass active hours check (used by hotkey).
     public func showOverlay(force: Bool = false) {
         guard !isOverlayVisible else { return }
+
+        // Voice permissions are required for the overlay (speech recognition + mic).
+        // If not authorized, redirect to System Settings instead of covering the
+        // permission dialog with a full-screen overlay.
+        guard voiceInput.isAuthorized else {
+            logger.warning("Cannot show overlay — voice permissions not granted, requesting settings")
+            onPermissionNeeded?()
+            return
+        }
 
         // Don't show outside active hours unless forced (hotkey)
         if !force {
@@ -245,7 +314,7 @@ public class CompanionState: ObservableObject {
         interruptListener.stop()
         mouthOpenness = 0
         // Brief delay before starting mic to avoid picking up tail-end audio
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + postTTSDelay) { [weak self] in
             guard self?.isOverlayVisible == true else { return }
             guard self?.voiceOutput.isSpeaking == false else { return }
             self?.voiceInput.startListening()
@@ -260,6 +329,7 @@ public class CompanionState: ObservableObject {
         interruptListener.stop()
         partialTranscription = ""
         lastSpokenText = ""
+        pendingInputs.removeAll()
     }
 
     // MARK: - Chat
@@ -418,7 +488,46 @@ public class CompanionState: ObservableObject {
     // MARK: - Private
 
     private func handleVoiceInput(_ text: String) async {
+        // Echo detection: if the mic picks up residual TTS audio after the delay,
+        // the speech recognizer may transcribe it as user speech. Compare against
+        // what Friday just said and ignore if it's an echo.
+        if isLikelyEcho(text) {
+            logger.warning("Echo detected, ignoring transcription: \(text.prefix(80))")
+            return
+        }
+
+        // Buffer when busy: if Friday is still chatting or speaking, queue the input.
+        // The pending buffer is flushed as a single combined message when TTS finishes
+        // (see onFinished callback), so stacked questions get one cohesive response.
+        if isChatting || voiceOutput.isSpeaking {
+            logger.info("Buffering voice input while busy: \(text.prefix(80))")
+            pendingInputs.append(text)
+            return
+        }
+
         await sendChat(message: text)
+    }
+
+    /// Check if transcribed text is likely an echo of Friday's own TTS output.
+    /// Compares heard words against the last spoken text — if most words match,
+    /// it's probably the mic picking up speaker output, not the user talking.
+    private func isLikelyEcho(_ text: String) -> Bool {
+        let spoken = voiceOutput.lastSpokenText.lowercased()
+        guard !spoken.isEmpty else { return false }
+        let heard = text.lowercased()
+        let heardWords = heard.split(separator: " ").map(String.init)
+        guard !heardWords.isEmpty else { return false }
+
+        // Count how many heard words appear in the spoken text
+        let matchCount = heardWords.filter { spoken.contains($0) }.count
+        let matchRatio = Double(matchCount) / Double(heardWords.count)
+
+        // If ≥60% of heard words appear in what was just spoken, treat as echo
+        if matchRatio >= 0.6 {
+            logger.info("Echo match: \(matchCount)/\(heardWords.count) words (\(Int(matchRatio * 100))%) match TTS output")
+            return true
+        }
+        return false
     }
 
     private func generateGreeting() async {
@@ -460,6 +569,8 @@ public class CompanionState: ObservableObject {
     }
 
     private func speakGreeting() {
+        // Add greeting to session so it appears in ConversationView naturally.
+        session.add(role: "assistant", content: greeting)
         voiceOutput.isMuted = isMuted
         voiceOutput.resetLastSpokenText()
         interruptListener.start()

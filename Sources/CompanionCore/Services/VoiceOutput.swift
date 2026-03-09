@@ -1,6 +1,9 @@
 // Sources/CompanionCore/Services/VoiceOutput.swift
 import Foundation
 import AVFoundation
+import os.log
+
+private let logger = Logger(subsystem: "com.ask149.friday", category: "VoiceOutput")
 
 /// Text-to-speech with mouth animation callbacks.
 /// Uses AVSpeechSynthesizer for on-device, free TTS.
@@ -130,6 +133,41 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
         onMouthUpdate?(0) // Close mouth
     }
 
+    /// Select the best available en-US voice: premium > enhanced > Samantha > any.
+    /// Logs a suggestion to download premium voices if none are installed.
+    public static func bestAvailableVoice() -> AVSpeechSynthesisVoice? {
+        let allVoices = AVSpeechSynthesisVoice.speechVoices()
+        let enUS = allVoices.filter { $0.language == "en-US" }
+
+        // Tier 1: Premium
+        if let premium = enUS.first(where: { $0.identifier.lowercased().contains("premium") }) {
+            logger.info("Using premium voice: \(premium.identifier)")
+            return premium
+        }
+
+        // Tier 2: Enhanced
+        if let enhanced = enUS.first(where: { $0.identifier.lowercased().contains("enhanced") }) {
+            logger.info("Using enhanced voice: \(enhanced.identifier)")
+            return enhanced
+        }
+
+        // Tier 3: Samantha (high-quality default)
+        if let samantha = enUS.first(where: { $0.name == "Samantha" }) {
+            logger.info("Using Samantha voice: \(samantha.identifier)")
+            return samantha
+        }
+
+        // Tier 4: Any en-US voice
+        if let fallback = enUS.first {
+            logger.info("Using fallback en-US voice: \(fallback.identifier)")
+            return fallback
+        }
+
+        // Log suggestion to download better voices
+        logger.warning("No premium/enhanced voices found. Download from: System Settings → Accessibility → Spoken Content → Manage Voices")
+        return nil
+    }
+
     // MARK: - Private
 
     /// Create an utterance with consistent voice settings and enqueue it.
@@ -139,10 +177,10 @@ public final class VoiceOutput: NSObject, AVSpeechSynthesizerDelegate {
         utterance.pitchMultiplier = 1.0
         utterance.volume = 1.0
 
-        // Use configured voice, falling back to system default
+        // Use configured voice, falling back to best available en-US voice
         if let id = voiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: id) {
             utterance.voice = voice
-        } else if let voice = AVSpeechSynthesisVoice(language: "en-US") {
+        } else if let voice = Self.bestAvailableVoice() {
             utterance.voice = voice
         }
 

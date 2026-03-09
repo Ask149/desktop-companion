@@ -18,6 +18,8 @@ public final class VoiceInput {
     public var onError: ((String) -> Void)?
     /// Called when `isListening` changes — use to drive SwiftUI `@Published` proxies.
     public var onListeningChanged: ((Bool) -> Void)?
+    /// Called with audio level (0.0–1.0) at ~10Hz while listening.
+    public var onAudioLevel: (@Sendable (Double) -> Void)?
 
     public private(set) var isListening = false {
         didSet {
@@ -38,7 +40,7 @@ public final class VoiceInput {
     /// Last partial transcription text, used for silence-based finalization.
     private var lastPartialText: String = ""
     /// Silence duration before treating partial result as final (seconds).
-    private let silenceTimeout: TimeInterval = 2.0
+    private let silenceTimeout: TimeInterval = 1.2
     /// Tracks consecutive recognition failures for auto-recovery.
     private var consecutiveFailures: Int = 0
     private let maxConsecutiveFailures = 3
@@ -128,7 +130,7 @@ public final class VoiceInput {
         // from its realtime queue, NOT the main thread. If the closure
         // inherits @MainActor isolation, Swift 6 will crash with
         // dispatch_assert_queue_fail / EXC_BREAKPOINT.
-        Self.installAudioTap(on: inputNode, format: recordingFormat, request: request)
+        Self.installAudioTap(on: inputNode, format: recordingFormat, request: request, onAudioLevel: onAudioLevel)
 
         audioEngine.prepare()
         do {
@@ -196,10 +198,34 @@ public final class VoiceInput {
     private nonisolated static func installAudioTap(
         on inputNode: AVAudioInputNode,
         format: AVAudioFormat,
-        request: SFSpeechAudioBufferRecognitionRequest
+        request: SFSpeechAudioBufferRecognitionRequest,
+        onAudioLevel: (@Sendable (Double) -> Void)?
     ) {
+        nonisolated(unsafe) var frameCount: Int = 0
+
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             request.append(buffer)
+
+            // Throttle audio level reporting to ~10Hz
+            frameCount += 1
+            guard frameCount % 5 == 0 else { return }
+            guard let callback = onAudioLevel else { return }
+
+            // Calculate RMS amplitude
+            guard let channelData = buffer.floatChannelData?[0] else { return }
+            let frameLength = Int(buffer.frameLength)
+            var sum: Float = 0
+            for i in 0..<frameLength {
+                let sample = channelData[i]
+                sum += sample * sample
+            }
+            let rms = sqrt(sum / Float(max(frameLength, 1)))
+            // Normalize: speech RMS ~0.001-0.05, scale up and clamp
+            let level = min(Double(rms) * 20.0, 1.0)
+
+            Task { @MainActor in
+                callback(level)
+            }
         }
     }
 
@@ -252,6 +278,7 @@ public final class VoiceInput {
         recognitionTask?.cancel()
         recognitionTask = nil
         isListening = false
+        onAudioLevel?(0)
     }
 
     /// Reset the failure counter — call after a successful interaction cycle.

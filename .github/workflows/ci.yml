@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Run tests
+        run: swift run CompanionTests
+
+      - name: Bundle app
+        run: bash scripts/bundle.sh
+
+  release:
+    needs: build-and-test
+    runs-on: macos-14
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release
+        run: swift build -c release
+
+      - name: Bundle app
+        run: bash scripts/bundle.sh
+
+      - name: Create DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          hdiutil create -volname "Friday" -srcfolder build/Friday.app -ov -format UDZO "build/Friday-${VERSION}.dmg"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Friday-*.dmg
+          generate_release_notes: true
