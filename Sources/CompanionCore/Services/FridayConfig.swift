@@ -18,6 +18,22 @@ public struct FridayConfig: Codable, Sendable {
     public var heartbeatStateDir: String?
     /// Directory for notes files (default: ~/.config/aidaemon/notes).
     public var notesDir: String?
+    /// Context providers that supply runtime context to the system prompt.
+    public var contextProviders: [ContextProviderConfig]?
+
+    /// Configuration for a single context provider.
+    public struct ContextProviderConfig: Codable, Sendable {
+        /// Provider type: "time", "heartbeat", "file", "command".
+        public var type: String
+        /// File path (for "file" and optionally "heartbeat" provider).
+        public var path: String?
+        /// Shell command (for "command" provider).
+        public var command: String?
+        /// Maximum events (for future calendar provider).
+        public var maxEvents: Int?
+        /// Maximum characters to read (for "file" provider, default 1000).
+        public var maxChars: Int?
+    }
 
     /// Load from ~/.config/friday/config.json. Returns empty config (all defaults) if file is missing.
     public static func load() -> FridayConfig {

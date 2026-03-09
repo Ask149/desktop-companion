@@ -62,6 +62,7 @@ public class CompanionState: ObservableObject {
     public let hotkeyManager = HotkeyManager()
     public let audioOutputDetector = AudioOutputDetector()
     public let fridayConfig: FridayConfig
+    private let contextProviders: [any ContextProvider]
 
     private var healthTimer: Timer?
     private var heartbeatTimer: Timer?
@@ -89,6 +90,13 @@ public class CompanionState: ObservableObject {
         let friday = FridayConfig.load()
         self.fridayConfig = friday
 
+        // Build context providers from config (defaults to time + heartbeat if not configured)
+        if let providerConfigs = friday.contextProviders, !providerConfigs.isEmpty {
+            contextProviders = ContextProviderFactory.build(from: providerConfigs)
+        } else {
+            contextProviders = [TimeContextProvider(), HeartbeatContextProvider(stateDir: friday.heartbeatStateDir)]
+        }
+
         // Initialize locale-dependent components
         let locale = friday.locale.map { Locale(identifier: $0) } ?? .current
         voiceInput = VoiceInput(locale: locale)
@@ -111,18 +119,14 @@ public class CompanionState: ObservableObject {
         // Set voice system prompt with configured user name
         let userName = friday.userName ?? "the user"
         voiceSystemPrompt = """
-            You are Friday, a voice AI companion on a Mac desktop. You are speaking aloud to \(userName).
-
-            CRITICAL RULES:
-            - You are a VOICE interface. Your responses will be spoken aloud by text-to-speech.
+            VOICE OUTPUT RULES (appended to workspace context):
+            You are currently speaking aloud to \(userName) via macOS text-to-speech.
             - Keep responses to 1-2 sentences. Be concise and conversational.
-            - NEVER use markdown formatting: no **bold**, no *italic*, no # headers, no - bullets, no `code`, no [links](url).
-            - NEVER use emojis or emoticons. Plain text only.
-            - Write in natural spoken English. Use plain text only.
-            - Don't list things with bullet points. Instead, mention them conversationally.
+            - NEVER use markdown: no **bold**, *italic*, # headers, - bullets, `code`, or [links](url).
+            - NEVER use emojis. Plain text only. Write in natural spoken English.
+            - Don't list things with bullet points. Mention them conversationally.
             - If asked something complex, give the key insight first, then offer to elaborate.
-            - Be warm but direct. You're a companion, not a document generator.
-            - When using tools, just share the result naturally — don't describe the tool or format.
+            - When using tools, share the result naturally — don't describe the tool or format.
             """
 
         moodEngine = MoodEngine(client: client, heartbeat: heartbeat,
@@ -401,11 +405,15 @@ public class CompanionState: ObservableObject {
         var finalText = ""
 
         do {
+            let contextSnippet = ContextProviderFactory.gatherContext(from: contextProviders)
+            let fullSystemPrompt = contextSnippet.isEmpty
+                ? voiceSystemPrompt
+                : voiceSystemPrompt + "\n\nCurrent context:\n" + contextSnippet
             let stream = client.chatStream(
                 message: message,
                 sessionID: session.sessionID,
                 model: model,
-                systemPrompt: voiceSystemPrompt
+                systemPrompt: fullSystemPrompt
             )
 
             for try await event in stream {
@@ -509,25 +517,9 @@ public class CompanionState: ObservableObject {
     }
 
     /// Check if transcribed text is likely an echo of Friday's own TTS output.
-    /// Compares heard words against the last spoken text — if most words match,
-    /// it's probably the mic picking up speaker output, not the user talking.
     private func isLikelyEcho(_ text: String) -> Bool {
-        let spoken = voiceOutput.lastSpokenText.lowercased()
-        guard !spoken.isEmpty else { return false }
-        let heard = text.lowercased()
-        let heardWords = heard.split(separator: " ").map(String.init)
-        guard !heardWords.isEmpty else { return false }
-
-        // Count how many heard words appear in the spoken text
-        let matchCount = heardWords.filter { spoken.contains($0) }.count
-        let matchRatio = Double(matchCount) / Double(heardWords.count)
-
-        // If ≥60% of heard words appear in what was just spoken, treat as echo
-        if matchRatio >= 0.6 {
-            logger.info("Echo match: \(matchCount)/\(heardWords.count) words (\(Int(matchRatio * 100))%) match TTS output")
-            return true
-        }
-        return false
+        let spoken = voiceOutput.lastSpokenText
+        return EchoDetector.isLikelyEcho(heard: text, spoken: spoken)
     }
 
     private func generateGreeting() async {
@@ -537,20 +529,18 @@ public class CompanionState: ObservableObject {
             return
         }
 
-        await moodEngine.refresh(aidaemonHealthy: aidaemonHealthy, isOverlayActive: true)
+        moodEngine.refresh(aidaemonHealthy: aidaemonHealthy, isOverlayActive: true, isChatting: false, isListening: false)
         mood = moodEngine.currentMood
         moodReason = moodEngine.moodReason
 
-        let report = heartbeat.readReport()
         let resumeContext = session.hasHistory ? "We were talking earlier. " : ""
 
+        let contextSnippet = ContextProviderFactory.gatherContext(from: contextProviders)
         let prompt = """
-        You are Friday, an AI companion on a Mac. Generate a brief greeting (1-2 sentences).
-        Be natural, warm, slightly witty. Don't be sycophantic.
+        Generate a brief greeting (1-2 sentences). Be natural, warm, slightly witty. Don't be sycophantic.
         \(resumeContext)
-        Context: \(String(report.summary.prefix(300)))
-        Mood: \(mood.rawValue) (\(moodReason))
-        Time: \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short))
+        Current mood: \(mood.rawValue) (\(moodReason))
+        \(contextSnippet)
         """
 
         do {
@@ -586,7 +576,7 @@ public class CompanionState: ObservableObject {
             Task { @MainActor in self?.readHeartbeat() }
         }
         moodTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refreshMood() }
+            Task { @MainActor in self?.refreshMood() }
         }
     }
 
@@ -607,7 +597,7 @@ public class CompanionState: ObservableObject {
     public func refresh() async {
         await checkHealth()
         readHeartbeat()
-        await refreshMood()
+        refreshMood()
         deriveMode()
     }
 
@@ -628,8 +618,13 @@ public class CompanionState: ObservableObject {
         deriveMode()
     }
 
-    private func refreshMood() async {
-        await moodEngine.refresh(aidaemonHealthy: aidaemonHealthy, isOverlayActive: isOverlayVisible)
+    private func refreshMood() {
+        moodEngine.refresh(
+            aidaemonHealthy: aidaemonHealthy,
+            isOverlayActive: isOverlayVisible,
+            isChatting: isChatting,
+            isListening: isVoiceListening
+        )
         mood = moodEngine.currentMood
         moodReason = moodEngine.moodReason
     }
@@ -647,6 +642,9 @@ public class CompanionState: ObservableObject {
         if awarenessReport?.hasAlerts == true { mode = .alert; return }
         if isChatting { mode = .thinking; return }
         mode = .idle
+
+        // Keep mood in sync with conversation state
+        refreshMood()
     }
 
     /// Heuristic: is this a complex query needing the strong model?

@@ -94,7 +94,7 @@ extension Mood {
                            color: .redOrange, glowIntensity: 0.8, idleAnimation: .rapidPulse)
         case .sleepy:
             MoodExpression(eyeShape: .droopingHalfMoons, mouthShape: .gentleSmile,
-                           color: .dimGray, glowIntensity: 0.15, idleAnimation: .slowDrift)
+                           color: .dimGray, glowIntensity: 0.3, idleAnimation: .slowDrift)
         case .playful:
             MoodExpression(eyeShape: .winking, mouthShape: .smirk,
                            color: .brightTeal, glowIntensity: 0.5, idleAnimation: .wiggle)

@@ -1,57 +1,38 @@
 // Sources/CompanionCore/Services/MoodEngine.swift
 import Foundation
 
-/// Derives Friday's mood from system state + optional LLM nuance.
-/// Layer 1: deterministic (system state). Layer 2: LLM override (haiku calls).
+/// Derives Friday's mood from system state + conversation state.
+/// Pure deterministic — no LLM calls. Fast and predictable.
 @MainActor
 public final class MoodEngine {
     public private(set) var currentMood: Mood = .calm
     public private(set) var moodReason: String = "Starting up"
 
-    private let client: AidaemonClient?
     private let heartbeat: HeartbeatMonitor
-    private var llmMood: Mood?
-    private var llmReason: String?
-    private var lastLLMCheck: Date = .distantPast
-
-    /// How often to ask the LLM for mood (seconds).
-    public var llmInterval: TimeInterval = 60
-
-    /// The model to use for mood checks (fast + cheap).
-    public let moodModel = "claude-haiku-4.5"
 
     /// Active hours range (used for sleepy mood detection).
     public let activeHoursStart: Int
     public let activeHoursEnd: Int
 
     public init(client: AidaemonClient?, heartbeat: HeartbeatMonitor, activeHoursStart: Int = 8, activeHoursEnd: Int = 22) {
-        self.client = client
         self.heartbeat = heartbeat
         self.activeHoursStart = activeHoursStart
         self.activeHoursEnd = activeHoursEnd
     }
 
-    /// Refresh mood from system state + optionally LLM.
-    /// - Parameter isOverlayActive: if true, checks LLM more frequently
-    public func refresh(aidaemonHealthy: Bool, isOverlayActive: Bool) async {
-        // Layer 1: deterministic mood from system state
+    /// Refresh mood from system state + conversation state.
+    public func refresh(aidaemonHealthy: Bool, isOverlayActive: Bool,
+                        isChatting: Bool = false, isListening: Bool = false) {
         let systemMood = deriveSystemMood(aidaemonHealthy: aidaemonHealthy)
 
-        // Layer 2: LLM nuance (only when overlay is active and aidaemon is up)
-        let now = Date()
-        let interval = isOverlayActive ? llmInterval : llmInterval * 5
-        if aidaemonHealthy && now.timeIntervalSince(lastLLMCheck) >= interval {
-            await refreshLLMMood()
-            lastLLMCheck = now
-        }
-
-        // Merge: system alert always wins, otherwise LLM overrides
-        if systemMood == .alert || systemMood == .sleepy {
-            currentMood = systemMood
-            moodReason = systemMoodReason(systemMood)
-        } else if let llm = llmMood {
-            currentMood = llm
-            moodReason = llmReason ?? "LLM mood"
+        if isOverlayActive, let convMood = deriveConversationMood(isChatting: isChatting, isListening: isListening) {
+            if systemMood == .alert || systemMood == .sleepy {
+                currentMood = systemMood
+                moodReason = systemMoodReason(systemMood)
+            } else {
+                currentMood = convMood
+                moodReason = conversationMoodReason(convMood)
+            }
         } else {
             currentMood = systemMood
             moodReason = systemMoodReason(systemMood)
@@ -60,80 +41,32 @@ public final class MoodEngine {
 
     /// Derive mood purely from system state (no API calls).
     public func deriveSystemMood(aidaemonHealthy: Bool) -> Mood {
-        // Alert: aidaemon unreachable AND heartbeat stale
         if !aidaemonHealthy {
             let stale = heartbeat.timeSinceLastAwareness().map { $0 > 3600 } ?? true
             return stale ? .alert : .concerned
         }
 
-        // Sleeping: outside active hours
         let hour = Calendar.current.component(.hour, from: Date())
         if hour >= activeHoursEnd || hour < activeHoursStart {
             return .sleepy
         }
 
-        // Concerned: heartbeat has alerts
         let report = heartbeat.readReport()
         if report.hasAlerts {
             return .concerned
         }
 
-        // Default: calm
         return .calm
     }
 
+    /// Derive mood from conversation state. Returns nil if not in a conversation.
+    public func deriveConversationMood(isChatting: Bool, isListening: Bool) -> Mood? {
+        if isChatting { return .focused }
+        if isListening { return .curious }
+        return nil
+    }
+
     // MARK: - Private
-
-    private func refreshLLMMood() async {
-        guard let client = client else { return }
-
-        let report = heartbeat.readReport()
-        let hour = Calendar.current.component(.hour, from: Date())
-        let dayOfWeek = Calendar.current.component(.weekday, from: Date())
-        let isWeekend = dayOfWeek == 1 || dayOfWeek == 7
-
-        let prompt = """
-        You are Friday, an AI companion. Given the current system state, respond with ONLY a JSON object (no markdown, no explanation):
-        {"mood":"<one of: calm, happy, curious, focused, concerned, alert, sleepy, playful>","reason":"<brief reason, 5-10 words>"}
-
-        System state:
-        - Time: \(hour):00
-        - Day: \(isWeekend ? "weekend" : "weekday")
-        - Alerts: \(report.hasAlerts ? "yes" : "none")
-        - Pending tasks: \(report.pendingTasks)
-        - Watchman issues: \(report.watchmanIssues.count)
-        - Awareness: \(String(report.summary.prefix(200)))
-        """
-
-        do {
-            let response = try await client.chat(
-                message: prompt,
-                sessionID: "friday-mood",
-                model: moodModel
-            )
-            parseMoodResponse(response.reply)
-        } catch {
-            // LLM mood is optional — fail silently
-        }
-    }
-
-    private func parseMoodResponse(_ text: String) {
-        // Extract JSON from response (handle potential markdown wrapping)
-        let cleaned = text
-            .replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let data = cleaned.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-              let moodStr = json["mood"],
-              let mood = Mood(rawValue: moodStr) else {
-            return
-        }
-
-        llmMood = mood
-        llmReason = json["reason"]
-    }
 
     private func systemMoodReason(_ mood: Mood) -> String {
         switch mood {
@@ -142,6 +75,14 @@ public final class MoodEngine {
         case .sleepy:    return "Outside active hours"
         case .calm:      return "All systems normal"
         default:         return mood.rawValue
+        }
+    }
+
+    private func conversationMoodReason(_ mood: Mood) -> String {
+        switch mood {
+        case .focused:  return "Thinking"
+        case .curious:  return "Listening"
+        default:        return mood.rawValue
         }
     }
 }

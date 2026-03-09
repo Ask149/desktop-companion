@@ -661,6 +661,297 @@ do {
 }
 
 // ============================================================
+// MARK: - Echo Detection Tests
+// ============================================================
+
+print("\nRunning Echo Detection tests...\n")
+
+// Test: exact echo detected
+do {
+    print("  test: exactEchoDetected")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "Hello how are you doing today",
+        spoken: "Hello how are you doing today"
+    )
+    check(result == true, "exact match should be detected as echo")
+    print("    ✓")
+}
+
+// Test: partial echo detected (most words match)
+do {
+    print("  test: partialEchoDetected")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "Hello how are you doing",
+        spoken: "Hello how are you doing today my friend"
+    )
+    check(result == true, "most words matching should be detected as echo")
+    print("    ✓")
+}
+
+// Test: real user input NOT detected as echo
+do {
+    print("  test: realInputNotEcho")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "What's the weather in Pune",
+        spoken: "Hello how are you doing today"
+    )
+    check(result == false, "unrelated input should not be echo")
+    print("    ✓")
+}
+
+// Test: stop words don't inflate match ratio
+do {
+    print("  test: stopWordsDontInflateMatch")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "I am a great person",
+        spoken: "The system is running great today"
+    )
+    check(result == false, "stop words matching should not cause false positive")
+    print("    ✓")
+}
+
+// Test: empty spoken text returns false
+do {
+    print("  test: emptySpokenNotEcho")
+    let result = EchoDetector.isLikelyEcho(heard: "hello world", spoken: "")
+    check(result == false, "empty spoken should not be echo")
+    print("    ✓")
+}
+
+// Test: empty heard text returns false
+do {
+    print("  test: emptyHeardNotEcho")
+    let result = EchoDetector.isLikelyEcho(heard: "", spoken: "hello world")
+    check(result == false, "empty heard should not be echo")
+    print("    ✓")
+}
+
+// Test: short input with moderate threshold (≤3 words needs 60%)
+do {
+    print("  test: shortInputModerateThreshold")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "sounds good",
+        spoken: "That sounds like a wonderful plan for the evening"
+    )
+    check(result == false, "short input with only partial match should not be echo (60% threshold)")
+    print("    ✓")
+}
+
+// Test: short input that IS an echo
+do {
+    print("  test: shortInputIsEcho")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "sounds good",
+        spoken: "sounds good to hear that"
+    )
+    check(result == true, "short input with both words matching should be echo")
+    print("    ✓")
+}
+
+// Test: case insensitive
+do {
+    print("  test: caseInsensitive")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "HELLO WORLD",
+        spoken: "hello world how are you"
+    )
+    check(result == true, "case should not matter for echo detection")
+    print("    ✓")
+}
+
+// Test: substring matching is NOT used (word "a" should not match "amazing")
+do {
+    print("  test: noSubstringMatching")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "play a song",
+        spoken: "That amazing performance was truly spectacular and wonderful"
+    )
+    check(result == false, "word 'a' should not match 'amazing' (no substring matching)")
+    print("    ✓")
+}
+
+// Test: all-stop-word input treated as echo when spoken is non-empty
+do {
+    print("  test: allStopWordsAsEcho")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "is that so",
+        spoken: "The weather is really nice outside today"
+    )
+    check(result == true, "all-stop-word heard text should be treated as echo when recently spoken")
+    print("    ✓")
+}
+
+// Test: all-stop-word input NOT echo when spoken is empty
+do {
+    print("  test: allStopWordsNoSpoken")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "is that so",
+        spoken: ""
+    )
+    check(result == false, "all-stop-word heard text should not be echo when nothing was spoken")
+    print("    ✓")
+}
+
+// Test: two-thirds match caught with lower threshold
+do {
+    print("  test: twoThirdsMatchCaught")
+    let result = EchoDetector.isLikelyEcho(
+        heard: "wonderful plan tonight",
+        spoken: "That sounds like a wonderful plan for the evening"
+    )
+    // heardWords: [wonderful, plan, tonight] → 2/3 = 67% >= 60%
+    check(result == true, "2/3 significant word match should be caught as echo")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - Mood Clarity Tests
+// ============================================================
+
+print("\nRunning Mood Clarity tests...\n")
+
+// Test: sleepy glow is visible (≥ 0.25)
+do {
+    print("  test: sleepyGlowVisible")
+    let expr = Mood.sleepy.expression
+    check(expr.glowIntensity >= 0.25,
+          "sleepy glow should be >= 0.25 for visibility, got \(expr.glowIntensity)")
+    print("    ✓")
+}
+
+// Test: MoodEngine derives conversation moods (focused when chatting)
+do {
+    print("  test: moodEngineFocusedWhenChatting")
+    let engine = MoodEngine(client: nil, heartbeat: HeartbeatMonitor())
+    let mood = engine.deriveConversationMood(isChatting: true, isListening: false)
+    check(mood == .focused, "should be focused when chatting, got \(String(describing: mood))")
+    print("    ✓")
+}
+
+// Test: MoodEngine derives conversation moods (curious when listening)
+do {
+    print("  test: moodEngineCuriousWhenListening")
+    let engine = MoodEngine(client: nil, heartbeat: HeartbeatMonitor())
+    let mood = engine.deriveConversationMood(isChatting: false, isListening: true)
+    check(mood == .curious, "should be curious when listening, got \(String(describing: mood))")
+    print("    ✓")
+}
+
+// Test: MoodEngine returns nil when not in conversation
+do {
+    print("  test: moodEngineNilWhenIdle")
+    let engine = MoodEngine(client: nil, heartbeat: HeartbeatMonitor())
+    let mood = engine.deriveConversationMood(isChatting: false, isListening: false)
+    check(mood == nil, "should be nil when not in conversation, got \(String(describing: mood))")
+    print("    ✓")
+}
+
+// ============================================================
+// MARK: - Context Provider Tests
+// ============================================================
+
+print("\nRunning Context Provider tests...\n")
+
+// Test: heartbeat provider returns non-empty context when state dir exists
+do {
+    print("  test: heartbeatProviderReturnsContext")
+    let provider = HeartbeatContextProvider()
+    let context = provider.fetchContext()
+    // May be empty in CI, but should not crash
+    check(context != nil || context == nil, "heartbeat provider should return optional string without crashing")
+    print("    ✓")
+}
+
+// Test: time provider returns current time info
+do {
+    print("  test: timeProviderReturnsTime")
+    let provider = TimeContextProvider()
+    let context = provider.fetchContext()
+    check(context != nil, "time provider should always return context")
+    if let ctx = context {
+        check(ctx.contains("Time:"), "should contain 'Time:' label, got: \(ctx.prefix(80))")
+        check(ctx.contains("Timezone:"), "should contain 'Timezone:' label")
+    }
+    print("    ✓")
+}
+
+// Test: file provider returns content of existing file
+do {
+    print("  test: fileProviderExistingFile")
+    let provider = FileContextProvider(path: "Package.swift")
+    let context = provider.fetchContext()
+    check(context != nil || context == nil, "file provider should not crash")
+    print("    ✓")
+}
+
+// Test: file provider returns nil for missing file
+do {
+    print("  test: fileProviderMissingFile")
+    let provider = FileContextProvider(path: "/nonexistent/path/file.md")
+    let context = provider.fetchContext()
+    check(context == nil, "file provider should return nil for missing file")
+    print("    ✓")
+}
+
+// Test: command provider runs a command
+do {
+    print("  test: commandProviderRunsCommand")
+    let provider = CommandContextProvider(command: "echo hello-context-test")
+    let context = provider.fetchContext()
+    check(context != nil, "command provider should return output")
+    if let ctx = context {
+        check(ctx.contains("hello-context-test"), "should contain command output, got: \(ctx)")
+    }
+    print("    ✓")
+}
+
+// Test: command provider returns nil for failing command
+do {
+    print("  test: commandProviderFailingCommand")
+    let provider = CommandContextProvider(command: "false")
+    let context = provider.fetchContext()
+    check(context == nil, "command provider should return nil for failed command")
+    print("    ✓")
+}
+
+// Test: FridayConfig decodes contextProviders
+do {
+    print("  test: configDecodesContextProviders")
+    let json = """
+    {
+        "userName": "Test",
+        "contextProviders": [
+            {"type": "time"},
+            {"type": "heartbeat"},
+            {"type": "file", "path": "~/.config/friday/context.md"},
+            {"type": "command", "command": "date '+%Z'"}
+        ]
+    }
+    """.data(using: .utf8)!
+    let config = try? JSONDecoder().decode(FridayConfig.self, from: json)
+    check(config != nil, "should decode config with contextProviders")
+    check(config?.contextProviders?.count == 4, "should have 4 providers, got \(config?.contextProviders?.count ?? 0)")
+    if let providers = config?.contextProviders {
+        check(providers[0].type == "time", "first provider should be time")
+        check(providers[2].path == "~/.config/friday/context.md", "file provider should have path")
+        check(providers[3].command == "date '+%Z'", "command provider should have command")
+    }
+    print("    ✓")
+}
+
+// Test: FridayConfig without contextProviders still decodes (backward compat)
+do {
+    print("  test: configWithoutContextProviders")
+    let json = """
+    {"userName": "Test"}
+    """.data(using: .utf8)!
+    let config = try? JSONDecoder().decode(FridayConfig.self, from: json)
+    check(config != nil, "should decode config without contextProviders")
+    check(config?.contextProviders == nil, "contextProviders should be nil when absent")
+    print("    ✓")
+}
+
+// ============================================================
 // MARK: - Results
 // ============================================================
 

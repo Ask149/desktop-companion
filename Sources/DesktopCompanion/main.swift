@@ -233,15 +233,15 @@ struct OverlayContentView: View {
 
     private func stateLabelContent(moodColor: Color) -> (String, Color, Double) {
         if state.isVoiceListening && !state.isChatting {
-            return ("Listening", moodColor, 0.6)
+            return ("\(state.mood.rawValue.capitalized) · Listening", moodColor, 0.6)
         } else if state.isChatting && state.partialAssistantResponse.isEmpty {
-            return ("Thinking...", .white, 0.4)
+            return ("\(state.mood.rawValue.capitalized) · Thinking", .white, 0.4)
         } else if state.voiceOutput.isSpeaking {
             return ("tap to interrupt", .white, 0.2)
-        } else if !state.moodReason.isEmpty {
-            return (state.moodReason, .white, 0.3)
         } else {
-            return ("", .white, 0)
+            let label = state.mood.rawValue.capitalized
+            let detail = state.moodReason.isEmpty ? "" : " · \(state.moodReason)"
+            return ("\(label)\(detail)", moodColor, 0.3)
         }
     }
 }
