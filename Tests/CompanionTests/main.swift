@@ -97,14 +97,17 @@ do {
     print("    ✓")
 }
 
-// Test 7: load config from real file (machine-specific)
+// Test 7: load config from real file (machine-specific, skips in CI)
 do {
     print("  test: loadConfigFromFile")
     let config = AidaemonConfig.load()
-    check(config != nil, "~/.config/aidaemon/config.json should exist on this machine")
-    check(config?.port == 8420, "port should be 8420")
-    check(!(config?.apiToken.isEmpty ?? true), "apiToken should not be empty")
-    print("    ✓")
+    if let config = config {
+        check(config.port == 8420, "port should be 8420")
+        check(!config.apiToken.isEmpty, "apiToken should not be empty")
+        print("    ✓")
+    } else {
+        print("    ⚠ skipped (no config file — expected in CI)")
+    }
 }
 
 // ============================================================
@@ -117,13 +120,14 @@ print("\nRunning AidaemonClient tests...\n")
 do {
     print("  test: clientInitFromConfig")
     let config = AidaemonConfig.load()
-    check(config != nil, "config should load")
     if let config = config {
         let client = AidaemonClient(config: config)
         check(client != nil, "client should initialize from config")
         check(client?.baseURL.absoluteString == "http://localhost:8420", "baseURL should be http://localhost:8420")
+        print("    ✓")
+    } else {
+        print("    ⚠ skipped (no config file)")
     }
-    print("    ✓")
 }
 
 // Test 9: health check against live aidaemon (machine-specific)
@@ -156,9 +160,12 @@ do {
     print("  test: readAwarenessReport")
     let monitor = HeartbeatMonitor()
     let report = monitor.readReport()
-    check(!report.summary.isEmpty, "last-awareness.txt should have content")
-    check(report.lastUpdated != nil, "last-awareness.txt should have a modification date")
-    print("    ✓")
+    if !report.summary.isEmpty {
+        check(report.lastUpdated != nil, "last-awareness.txt should have a modification date")
+        print("    ✓")
+    } else {
+        print("    ⚠ skipped (no awareness file — expected in CI)")
+    }
 }
 
 // Test 11: alert detection
@@ -192,7 +199,6 @@ do {
     print("  test: timeSinceLastAwareness")
     let monitor = HeartbeatMonitor()
     let elapsed = monitor.timeSinceLastAwareness()
-    check(elapsed != nil, "timeSinceLastAwareness should return a value (file exists)")
     if let elapsed = elapsed {
         check(elapsed >= 0, "elapsed time should be non-negative, got \(elapsed)")
         print("    ✓ (elapsed=\(Int(elapsed))s)")
